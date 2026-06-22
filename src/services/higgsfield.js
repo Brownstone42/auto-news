@@ -6,7 +6,6 @@ export async function checkHiggsfieldStatus() {
   return res.json()
 }
 
-
 export async function generateImage({ model, prompt, aspectRatio = '1:1' }) {
   const res = await fetch(`${BASE}/generate`, {
     method: 'POST',

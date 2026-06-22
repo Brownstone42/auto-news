@@ -21,6 +21,7 @@ const hfModels = [
   { id: 'seedream',      name: 'Seedream',       description: 'Best artistic style · Low cost · Unlimited on Plus' },
   { id: 'flux_2',        name: 'FLUX 2',         description: 'Fast & reliable · Low cost · Unlimited on Plus' },
   { id: 'soul_v2',       name: 'Soul V2',        description: 'Best for people & portraits · Mid cost' },
+  // Note: frontend IDs are mapped to correct job_set_types in Firebase Functions (MODEL_IDS map)
 ]
 const imageGenState = ref({}) // { postId: { open, model, prompt, loadingPrompt, loadingImage, imageUrl, error, aspectRatio } }
 

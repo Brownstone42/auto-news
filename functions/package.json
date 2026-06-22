@@ -1,0 +1,10 @@
+{
+  "name": "functions",
+  "main": "index.js",
+  "type": "module",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "@higgsfield/client": "latest",
+    "firebase-functions": "^6.0.0"
+  }
+}

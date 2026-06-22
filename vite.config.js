@@ -17,7 +17,16 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/higgsfield': 'http://localhost:3001',
+      '/api/higgsfield/status': {
+        target: 'https://higgsfieldstatus-yc6y4fychq-as.a.run.app',
+        changeOrigin: true,
+        rewrite: () => '/',
+      },
+      '/api/higgsfield/generate': {
+        target: 'https://higgsfieldgenerate-yc6y4fychq-as.a.run.app',
+        changeOrigin: true,
+        rewrite: () => '/',
+      },
     },
   },
 })
