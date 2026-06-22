@@ -1,0 +1,27 @@
+export const products = [
+  { rank: 1,  id: 'nylon-glove-pu-coat',      name: 'Nylon Glove PU Coat',      group: 'Glove & Finger Cot', sales: 9214003, onShopee: true },
+  { rank: 2,  id: 'latex-glove',               name: 'Latex Glove',              group: 'Glove & Finger Cot', sales: 8994277, onShopee: true },
+  { rank: 3,  id: 'vinyl-glove',               name: 'Vinyl Glove',              group: 'Glove & Finger Cot', sales: 5684170, onShopee: false },
+  { rank: 4,  id: 'antistatic-cloth',          name: 'Anti-Static Cloth',        group: 'Cloth & Swab',       sales: 4556828, onShopee: false },
+  { rank: 5,  id: 'nitrile-glove',             name: 'Nitrile Glove',            group: 'Glove & Finger Cot', sales: 3151607, onShopee: false },
+  { rank: 6,  id: 'wiper',                     name: 'Wiper',                    group: 'Cleanroom Wiper',    sales: 2793715, onShopee: true },
+  { rank: 7,  id: 'finger-cot',                name: 'Finger Cot',               group: 'Glove & Finger Cot', sales: 2487822, onShopee: true },
+  { rank: 8,  id: 'sticky-mat',                name: 'Sticky Mat',               group: 'Mats & Accessories', sales: 1687726, onShopee: false },
+  { rank: 9,  id: 'table-mat',                 name: 'Table Mat',                group: 'Mats & Accessories', sales: 1325790, onShopee: false },
+  { rank: 10, id: 'antistatic-rubber-band',    name: 'Anti-Static Rubber Band',  group: 'Packaging & ESD',    sales: 1279500, onShopee: false },
+  { rank: 11, id: 'antistatic-tape',           name: 'Anti-Static Tape',         group: 'Packaging & ESD',    sales: 1180060, onShopee: false },
+  { rank: 12, id: 'shoe-cover',                name: 'Shoe Cover',               group: 'Footwear & PPE',     sales: 1077747, onShopee: true },
+  { rank: 13, id: 'surgical-glove',            name: 'Surgical Glove',           group: 'Glove & Finger Cot', sales: 995760,  onShopee: false },
+  { rank: 14, id: 'antistatic-zip-bag',        name: 'Anti-Static Zip Bag',      group: 'Packaging & ESD',    sales: 860600,  onShopee: false },
+  { rank: 15, id: 'bouffant-cap',              name: 'Bouffant Cap',             group: 'Garments',           sales: 821769,  onShopee: false },
+  { rank: 16, id: 'ldpe-bag',                  name: 'LDPE Bag',                 group: 'Packaging & ESD',    sales: 649140,  onShopee: false },
+  { rank: 17, id: 'grid-curtain',              name: 'Grid Curtain',             group: 'Mats & Accessories', sales: 611280,  onShopee: false },
+  { rank: 18, id: 'wrist-strap-monitors',      name: 'Wrist Strap Monitors',     group: 'Mats & Accessories', sales: 249840,  onShopee: false },
+  { rank: 19, id: 'magnifying-lamp',           name: 'Magnifying Lamp',          group: 'Equipment',          sales: 164310,  onShopee: false },
+  { rank: 20, id: 'sticky-roller',             name: 'Sticky Roller',            group: 'Mats & Accessories', sales: 164050,  onShopee: false },
+  { rank: 21, id: 'cleanroom-mops',            name: 'Cleanroom Mops',           group: 'Equipment',          sales: 159665,  onShopee: false },
+  { rank: 22, id: 'cable-ties',                name: 'Cable Ties',               group: 'Cloth & Swab',       sales: 150825,  onShopee: false },
+  { rank: 23, id: 'face-mask',                 name: 'Face Mask',                group: 'Footwear & PPE',     sales: 150105,  onShopee: false },
+]
+
+export const productGroups = [...new Set(products.map((p) => p.group))]
