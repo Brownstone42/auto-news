@@ -1,17 +1,22 @@
 import express from 'express'
 import { spawn } from 'child_process'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
-// Write Higgsfield credentials from env vars so the CLI can authenticate headlessly
-if (process.env.HF_ACCESS_TOKEN) {
-  const dir = join(homedir(), '.config', 'higgsfield')
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'credentials.json'), JSON.stringify({
-    access_token: process.env.HF_ACCESS_TOKEN,
-    refresh_token: process.env.HF_REFRESH_TOKEN || '',
+const CREDS_PATH = join(homedir(), '.config', 'higgsfield', 'credentials.json')
+
+function writeCredentials(accessToken, refreshToken) {
+  mkdirSync(join(homedir(), '.config', 'higgsfield'), { recursive: true })
+  writeFileSync(CREDS_PATH, JSON.stringify({
+    access_token: accessToken,
+    refresh_token: refreshToken || '',
   }))
+}
+
+// Seed credentials from env vars on startup
+if (process.env.HF_ACCESS_TOKEN) {
+  writeCredentials(process.env.HF_ACCESS_TOKEN, process.env.HF_REFRESH_TOKEN)
 }
 
 const app = express()
@@ -55,7 +60,11 @@ function runCLI(args, timeoutMs = 10000) {
       clearTimeout(timer)
       const combined = stdout + '\n' + stderr
       if (code === 0) resolve(combined)
-      else reject(new Error(combined.trim() || `Exit code ${code}`))
+      else {
+        // If the CLI refreshed the token before failing, the new creds are on disk —
+        // they'll be used on the next call automatically since we read CREDS_PATH fresh.
+        reject(new Error(combined.trim() || `Exit code ${code}`))
+      }
     })
     proc.on('error', (err) => { clearTimeout(timer); reject(err) })
   })
@@ -75,6 +84,14 @@ app.get('/api/higgsfield/status', async (_req, res) => {
   } catch {
     res.json({ authenticated: false, hint: 'Run: higgsfield auth login' })
   }
+})
+
+// Accept a fresh token posted from local machine after `hf auth login`
+app.post('/api/higgsfield/update-token', (req, res) => {
+  const { access_token, refresh_token } = req.body
+  if (!access_token) return res.status(400).json({ error: 'access_token required' })
+  writeCredentials(access_token, refresh_token)
+  res.json({ ok: true })
 })
 
 // Always return the 5 curated T2I models
