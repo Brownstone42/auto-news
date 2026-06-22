@@ -2,6 +2,7 @@ const BASE = '/api/higgsfield'
 
 export async function checkHiggsfieldStatus() {
   const res = await fetch(`${BASE}/status`)
+  if (!res.ok) return { authenticated: false }
   return res.json()
 }
 
