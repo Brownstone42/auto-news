@@ -1,9 +1,12 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { products } from '@/data/products'
 import { postTypes } from '@/data/topics'
 import { generatePost } from '@/services/openai'
+import { savePost, fetchExamples } from '@/services/firebase'
 
+const router = useRouter()
 const selectedId = ref('')
 const selectedTypeId = ref('')
 const selectedAngleId = ref('')
@@ -11,6 +14,7 @@ const outputText = ref('')
 const isGenerating = ref(false)
 const errorMsg = ref('')
 const copied = ref(false)
+const savedToHistory = ref(false)
 
 const selectedProduct = computed(() => products.find((p) => p.id === selectedId.value) ?? null)
 const selectedType = computed(() => postTypes.find((t) => t.id === selectedTypeId.value) ?? null)
@@ -50,11 +54,32 @@ async function generate() {
   if (!canGenerate.value) return
   outputText.value = ''
   errorMsg.value = ''
+  savedToHistory.value = false
   isGenerating.value = true
   try {
-    await generatePost(selectedProduct.value, selectedType.value, selectedAngle.value, (chunk) => {
-      outputText.value += chunk
+    const examples = await fetchExamples({
+      postTypeId: selectedType.value.id,
+      angleId: selectedAngle.value.id,
+    }).catch(() => [])
+
+    await generatePost(
+      selectedProduct.value,
+      selectedType.value,
+      selectedAngle.value,
+      examples,
+      (chunk) => {
+        outputText.value += chunk
+      },
+    )
+
+    await savePost({
+      product: selectedProduct.value,
+      postType: selectedType.value,
+      angle: selectedAngle.value,
+      aiGenerated: outputText.value,
+      model: 'openai',
     })
+    savedToHistory.value = true
   } catch (err) {
     errorMsg.value = err.message || 'Generation failed. Check your API key in .env'
   } finally {
@@ -88,6 +113,7 @@ function formatSales(n) {
             <p class="brand-sub">Generate Thai Facebook posts for your top products</p>
           </div>
         </div>
+        <button class="nav-btn" @click="router.push('/history')">📋 Post History</button>
       </div>
     </header>
 
@@ -162,7 +188,7 @@ function formatSales(n) {
           <h3>Ready to generate</h3>
           <p>Pick a product, post type, and content angle — then click Generate.</p>
           <div class="tip-box">
-            <strong>Tip:</strong> 🛒 products get a Shopee CTA, others get an Inbox CTA automatically.
+            <strong>Tip:</strong> Posts are saved automatically. Rate and finalize them in History to improve future generations.
           </div>
         </div>
 
@@ -205,6 +231,9 @@ function formatSales(n) {
               {{ copied ? '✓ Copied!' : '📋 Copy Post' }}
             </button>
             <button class="regen-btn" @click="generate">↺ Regenerate</button>
+            <button v-if="savedToHistory" class="history-btn" @click="router.push('/history')">
+              ✓ Saved → History
+            </button>
           </div>
         </div>
       </section>
@@ -229,11 +258,30 @@ function formatSales(n) {
   max-width: 1400px;
   margin: 0 auto;
   padding: 14px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 1;
+}
+.nav-btn {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 .brand-logo {
   width: 38px;
@@ -722,5 +770,19 @@ function formatSales(n) {
 .regen-btn:hover {
   border-color: #0a6b5e;
   color: #0a6b5e;
+}
+.history-btn {
+  padding: 11px 16px;
+  background: #e8f4f2;
+  color: #0a6b5e;
+  border: 1.5px solid #a8d5ce;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.history-btn:hover {
+  background: #d0e9e5;
 }
 </style>

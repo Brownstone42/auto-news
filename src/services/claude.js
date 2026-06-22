@@ -21,13 +21,39 @@ Format Output (ต้องตามนี้ทุกครั้ง):
 ─────────────────────────
 [Hashtag 5–7 ตัว คละไทย-อังกฤษ เกี่ยวกับสินค้าและอุตสาหกรรม — ห้ามใช้ #Goodbooch หรือชื่อแบรนด์]`
 
-export async function generatePost(product, postType, angle, onChunk) {
+function buildExamplesBlock({ finalized = [], reviewed = [] } = {}) {
+  const parts = []
+
+  if (finalized.length > 0) {
+    const block = finalized.map((e, i) => `--- ตัวอย่างที่ ${i + 1} ---\n${e}`).join('\n\n')
+    parts.push(`✅ ตัวอย่าง Post ที่ผ่านการแก้ไขและโพสต์จริง (เขียนในลักษณะเดียวกัน ห้ามคัดลอก):\n\n${block}\n---`)
+  }
+
+  const withFeedback = reviewed.filter((r) => r.feedback?.trim())
+  if (withFeedback.length > 0) {
+    const lines = withFeedback.map((r) => `- คะแนน ${r.score}/10: "${r.feedback.trim()}"`)
+    parts.push(`🔍 Feedback จาก Post ที่ผ่านการรีวิว (เรียนรู้และหลีกเลี่ยงปัญหาเหล่านี้):\n${lines.join('\n')}`)
+  }
+
+  const highScored = reviewed.filter((r) => r.score >= 8 && !r.feedback?.trim())
+  if (highScored.length > 0) {
+    const lines = highScored.map((r) => `- Post ที่ได้คะแนน ${r.score}/10 ถือว่าดี — รักษาแนวทางนี้ไว้`)
+    parts.push(`👍 สัญญาณคุณภาพจาก Post ที่ผ่านมา:\n${lines.join('\n')}`)
+  }
+
+  if (parts.length === 0) return ''
+  return `\n\n📌 อ้างอิงจากประวัติการสร้าง Post:\n\n${parts.join('\n\n')}`
+}
+
+export async function generatePost(product, postType, angle, examples, onChunk) {
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey || apiKey === 'your_api_key_here') {
     throw new Error('Please set VITE_ANTHROPIC_API_KEY in your .env file')
   }
 
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+
+  const examplesBlock = buildExamplesBlock(examples)
 
   const userPrompt = `สร้าง Facebook post สำหรับ:
 
@@ -36,7 +62,7 @@ export async function generatePost(product, postType, angle, onChunk) {
 
 📝 ประเภท Post: ${postType.label}
 💡 มุม Content: ${angle.label}
-🎯 แนวทาง: ${angle.prompt}`
+🎯 แนวทาง: ${angle.prompt}${examplesBlock}`
 
   const stream = client.messages.stream({
     model: 'claude-opus-4-8',
