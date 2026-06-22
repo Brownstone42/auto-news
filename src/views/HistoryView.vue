@@ -1,16 +1,110 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchPosts, updatePost, addVersion, updateVersion, fetchExamples } from '@/services/firebase'
-import { generatePost } from '@/services/openai'
+import { fetchPosts, updatePost, addVersion, updateVersion, fetchExamples, saveVersionImage } from '@/services/firebase'
+import { generatePost, generateImagePrompt } from '@/services/openai'
+import { checkHiggsfieldStatus, generateImage } from '@/services/higgsfield'
 
 const router = useRouter()
 const posts = ref([])
 const loading = ref(true)
 const expandedId = ref(null)
 const saving = ref(null)
-const isRegening = ref(null) // postId currently being regenerated
+const isRegening = ref(null)
 const statusFilter = ref('all')
+
+// Higgsfield image generation
+const hfConnected = ref(false)
+const hfModels = [
+  { id: 'nano_banana_2', name: 'Nano Banana 2', description: 'Best overall · Cheapest credits · #1 benchmark' },
+  { id: 'gpt_image_2',   name: 'GPT Image 2',   description: 'Best instruction-following · Premium quality' },
+  { id: 'seedream',      name: 'Seedream',       description: 'Best artistic style · Low cost · Unlimited on Plus' },
+  { id: 'flux_2',        name: 'FLUX 2',         description: 'Fast & reliable · Low cost · Unlimited on Plus' },
+  { id: 'soul_v2',       name: 'Soul V2',        description: 'Best for people & portraits · Mid cost' },
+]
+const imageGenState = ref({}) // { postId: { open, model, prompt, loadingPrompt, loadingImage, imageUrl, error, aspectRatio } }
+
+const ASPECT_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16']
+
+function getImageGen(postId) {
+  if (!imageGenState.value[postId]) {
+    imageGenState.value[postId] = {
+      open: false,
+      model: hfModels[0]?.id ?? 'nano_banana_2',
+      prompt: '',
+      loadingPrompt: false,
+      loadingImage: false,
+      imageUrl: '',
+      error: '',
+      aspectRatio: '1:1',
+    }
+  }
+  return imageGenState.value[postId]
+}
+
+async function openImagePanel(post) {
+  const state = getImageGen(post.id)
+  state.open = !state.open
+  // Auto-generate image prompt when opening if empty
+  if (state.open && !state.prompt) {
+    await autoGeneratePrompt(post)
+  }
+}
+
+function buildFallbackPrompt(post) {
+  return `Professional product photography of ${post.product?.name} used in a clean industrial ${post.product?.group} environment. Soft studio lighting, white background, sharp detail, modern aesthetic.`
+}
+
+async function autoGeneratePrompt(post) {
+  const state = getImageGen(post.id)
+  const version = getSelectedVersion(post)
+  state.loadingPrompt = true
+  state.prompt = ''   // clear immediately so the user sees it reset
+  state.error = ''
+  try {
+    const text = version?.text || ''
+    const result = await generateImagePrompt(text)
+    console.log('[ImagePrompt] API result:', JSON.stringify(result))
+    if (result && result.trim()) {
+      state.prompt = result.trim()
+    } else {
+      console.warn('[ImagePrompt] empty result from API — check openai.js generateImagePrompt')
+      state.prompt = buildFallbackPrompt(post)
+      state.error = 'API returned empty prompt — using fallback. Check console.'
+    }
+  } catch (err) {
+    console.error('[ImagePrompt] error:', err)
+    state.prompt = buildFallbackPrompt(post)
+    state.error = `Auto-prompt failed (using fallback): ${err.message}`
+  } finally {
+    state.loadingPrompt = false
+  }
+}
+
+async function runImageGeneration(post) {
+  const state = getImageGen(post.id)
+  if (!state.prompt.trim() || state.loadingImage) return
+  state.loadingImage = true
+  state.imageUrl = ''
+  state.error = ''
+  try {
+    const result = await generateImage({ model: state.model, prompt: state.prompt, aspectRatio: state.aspectRatio })
+    state.imageUrl = result.imageUrl
+
+    // Auto-save image + prompt used onto the current version
+    const version = getSelectedVersion(post)
+    const imageData = { url: result.imageUrl, prompt: state.prompt, model: state.model, aspectRatio: state.aspectRatio }
+    const updatedVersions = await saveVersionImage(post.id, version.versionNumber, imageData)
+
+    // Update local posts array so history shows the image immediately without refetch
+    const localPost = posts.value.find((p) => p.id === post.id)
+    if (localPost) localPost.versions = updatedVersions
+  } catch (err) {
+    state.error = err.message
+  } finally {
+    state.loadingImage = false
+  }
+}
 
 // Per-version score+feedback local state: key = `${postId}-v${n}`
 const localScores = ref({})
@@ -57,6 +151,14 @@ function getLocalFinal(post) {
 onMounted(async () => {
   posts.value = await fetchPosts()
   loading.value = false
+
+  // Check Higgsfield connection
+  try {
+    const status = await checkHiggsfieldStatus()
+    hfConnected.value = status.authenticated
+  } catch {
+    // Server not running — Higgsfield features will be hidden
+  }
 })
 
 const filteredPosts = computed(() => {
@@ -245,7 +347,17 @@ function isVersionLocked(post, version) {
               </div>
               <pre v-else class="post-text readonly">{{ getSelectedVersion(post).text }}</pre>
 
-              <!-- Regenerate button — only when selected version has a score -->
+              <!-- Saved image for this version -->
+              <div v-if="getSelectedVersion(post).image?.url" class="saved-image-block">
+                <img :src="getSelectedVersion(post).image.url" alt="Generated image" class="saved-img" />
+                <div class="saved-img-meta">
+                  <span class="saved-img-label">🎨 {{ getSelectedVersion(post).image.model }} · {{ getSelectedVersion(post).image.aspectRatio }}</span>
+                  <a :href="getSelectedVersion(post).image.url" target="_blank" download class="download-btn">↓ Download</a>
+                </div>
+                <p class="saved-img-prompt">{{ getSelectedVersion(post).image.prompt }}</p>
+              </div>
+
+              <!-- Regenerate button -->
               <button
                 v-if="getSelectedVersion(post).score !== null && isRegening !== post.id"
                 class="regen-history-btn"
@@ -254,6 +366,88 @@ function isVersionLocked(post, version) {
               >
                 ↺ Regenerate using v{{ getSelectedVersion(post).versionNumber }} feedback
               </button>
+
+              <!-- Generate Image button — only when Higgsfield is connected -->
+              <button
+                v-if="hfConnected"
+                :class="['image-gen-btn', { active: getImageGen(post.id).open }]"
+                @click="openImagePanel(post)"
+              >
+                🎨 {{ getImageGen(post.id).open ? 'Close Image Panel' : 'Generate Image' }}
+              </button>
+
+              <!-- Image generation panel -->
+              <div v-if="hfConnected && getImageGen(post.id).open" class="image-panel">
+                <!-- Model selector -->
+                <div class="field-group">
+                  <span class="label">Model</span>
+                  <div class="model-pills">
+                    <button
+                      v-for="m in hfModels"
+                      :key="m.id"
+                      :class="['model-pill', { active: getImageGen(post.id).model === m.id }]"
+                      @click="getImageGen(post.id).model = m.id"
+                    >
+                      <span class="model-name">{{ m.name }}</span>
+                      <span class="model-desc">{{ m.description }}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Aspect ratio -->
+                <div class="field-group">
+                  <span class="label">Aspect Ratio</span>
+                  <div class="ratio-pills">
+                    <button
+                      v-for="r in ASPECT_RATIOS"
+                      :key="r"
+                      :class="['ratio-pill', { active: getImageGen(post.id).aspectRatio === r }]"
+                      @click="getImageGen(post.id).aspectRatio = r"
+                    >
+                      {{ r }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Image prompt -->
+                <div class="field-group">
+                  <div class="label-row">
+                    <span class="label">Image Prompt</span>
+                    <button class="reprompt-btn" :disabled="getImageGen(post.id).loadingPrompt" @click="autoGeneratePrompt(post)">
+                      {{ getImageGen(post.id).loadingPrompt ? 'Generating...' : '↺ Re-generate prompt' }}
+                    </button>
+                  </div>
+                  <textarea
+                    class="feedback-input"
+                    v-model="getImageGen(post.id).prompt"
+                    :placeholder="getImageGen(post.id).loadingPrompt ? 'Generating image prompt...' : 'Describe the image you want...'"
+                    rows="3"
+                  />
+                </div>
+
+                <!-- Error -->
+                <div v-if="getImageGen(post.id).error" class="image-error">
+                  ⚠ {{ getImageGen(post.id).error }}
+                </div>
+
+                <!-- Generate button -->
+                <button
+                  class="generate-image-btn"
+                  :disabled="!getImageGen(post.id).prompt.trim() || getImageGen(post.id).loadingImage || getImageGen(post.id).loadingPrompt"
+                  @click="runImageGeneration(post)"
+                >
+                  <span v-if="getImageGen(post.id).loadingImage" class="spin">⟳</span>
+                  {{ getImageGen(post.id).loadingImage ? 'Generating...' : '🎨 Generate' }}
+                </button>
+
+                <!-- Result -->
+                <div v-if="getImageGen(post.id).imageUrl" class="image-result">
+                  <img :src="getImageGen(post.id).imageUrl" alt="Generated image" class="result-img" />
+                  <a :href="getImageGen(post.id).imageUrl" target="_blank" download class="download-btn">
+                    ↓ Download
+                  </a>
+                </div>
+              </div>
             </section>
 
             <div class="divider" />
@@ -595,5 +789,105 @@ function isVersionLocked(post, version) {
 .finalized-badge {
   font-size: 12px; font-weight: 600; color: #166534;
   background: #dcfce7; padding: 5px 12px; border-radius: 8px;
+}
+
+/* ── Image generation ── */
+.image-gen-btn {
+  align-self: flex-start;
+  padding: 8px 16px;
+  background: white; color: #7c3aed;
+  border: 1.5px solid #ddd6fe; border-radius: 8px;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+}
+.image-gen-btn:hover { background: #f5f3ff; border-color: #a78bfa; }
+.image-gen-btn.active { background: #f5f3ff; border-color: #7c3aed; }
+
+.image-panel {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 18px; background: #faf8ff;
+  border: 1.5px solid #ddd6fe; border-radius: 10px;
+}
+
+.model-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.model-pill {
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: 8px 14px; border-radius: 10px;
+  border: 1.5px solid #ddd6fe; background: white;
+  cursor: pointer; transition: all 0.12s; text-align: left;
+}
+.model-pill:hover { border-color: #7c3aed; background: #f5f3ff; }
+.model-pill.active { background: #7c3aed; border-color: #7c3aed; }
+.model-name { font-size: 12px; font-weight: 700; color: #7c3aed; line-height: 1.3; }
+.model-pill.active .model-name { color: white; }
+.model-desc { font-size: 10px; font-weight: 400; color: #a78bfa; line-height: 1.3; margin-top: 2px; }
+.model-pill.active .model-desc { color: rgba(255,255,255,0.75); }
+
+.ratio-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.ratio-pill {
+  padding: 5px 12px; border-radius: 20px;
+  border: 1.5px solid #ddd6fe; background: white;
+  font-size: 12px; font-weight: 600; color: #7c3aed; cursor: pointer; transition: all 0.12s;
+}
+.ratio-pill:hover { border-color: #7c3aed; background: #f5f3ff; }
+.ratio-pill.active { background: #7c3aed; border-color: #7c3aed; color: white; }
+
+.label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.reprompt-btn {
+  font-size: 11px; font-weight: 600; color: #7c3aed;
+  background: none; border: none; cursor: pointer; padding: 0; text-decoration: underline;
+}
+.reprompt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.image-error {
+  font-size: 12px; color: #dc2626;
+  background: #fef2f2; border: 1px solid #fecaca;
+  border-radius: 8px; padding: 8px 12px;
+}
+
+.generate-image-btn {
+  align-self: flex-start;
+  padding: 10px 22px; background: #7c3aed; color: white;
+  border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; display: flex; align-items: center; gap: 7px; transition: background 0.15s;
+}
+.generate-image-btn:hover:not(:disabled) { background: #6d28d9; }
+.generate-image-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.image-result {
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+}
+.result-img {
+  max-width: 100%; max-height: 480px;
+  border-radius: 10px; border: 1px solid #ddd6fe;
+  object-fit: contain;
+}
+.download-btn {
+  padding: 8px 18px; background: #7c3aed; color: white;
+  border-radius: 8px; font-size: 13px; font-weight: 600;
+  text-decoration: none; transition: background 0.15s; display: inline-block;
+}
+.download-btn:hover { background: #6d28d9; }
+
+.saved-image-block {
+  margin-top: 14px; display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid #ede9fe; padding-top: 14px;
+}
+.saved-img {
+  max-width: 100%; max-height: 400px; border-radius: 10px;
+  border: 1px solid #ddd6fe; object-fit: contain;
+}
+.saved-img-meta {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.saved-img-label {
+  font-size: 12px; color: #7c3aed; font-weight: 600;
+  background: #f5f3ff; padding: 3px 10px; border-radius: 20px;
+}
+.saved-img-prompt {
+  font-size: 12px; color: #6b7280; font-style: italic;
+  margin: 0; line-height: 1.5;
 }
 </style>

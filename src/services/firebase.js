@@ -68,6 +68,23 @@ export async function updateVersion(postId, versionNumber, { score, feedback }) 
   return { versions, status }
 }
 
+// Save generated image data onto a specific version
+export async function saveVersionImage(postId, versionNumber, { url, prompt, model, aspectRatio }) {
+  const snap = await getDoc(doc(db, 'posts', postId))
+  const data = snap.data()
+  const versions = (
+    data.versions?.length
+      ? data.versions
+      : [{ versionNumber: 1, text: data.aiGenerated, score: null, feedback: '', createdAt: null }]
+  ).map((v) =>
+    v.versionNumber === versionNumber
+      ? { ...v, image: { url, prompt, model, aspectRatio, savedAt: new Date().toISOString() } }
+      : v
+  )
+  await updateDoc(doc(db, 'posts', postId), { versions, updatedAt: serverTimestamp() })
+  return versions
+}
+
 export async function updatePost(id, updates) {
   await updateDoc(doc(db, 'posts', id), { ...updates, updatedAt: serverTimestamp() })
 }

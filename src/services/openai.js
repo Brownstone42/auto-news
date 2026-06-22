@@ -78,3 +78,41 @@ export async function generatePost(product, postType, angle, examples, onChunk) 
     if (text) onChunk(text)
   }
 }
+
+// Convert a Thai product post into an English visual image prompt for Higgsfield
+export async function generateImagePrompt(postText) {
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY
+  if (!apiKey || apiKey === 'your_api_key_here') {
+    throw new Error('Please set VITE_OPENAI_API_KEY in your .env file')
+  }
+  const client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true })
+
+  // Strip hashtag section before sending
+  const body = postText.split('─')[0].trim()
+
+  const res = await client.chat.completions.create({
+    model: import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are an image prompt generator for AI image generation tools like Higgsfield. Convert Thai B2B industrial product social media posts into concise English visual prompts. Output only the image prompt — no explanation, no Thai text.',
+      },
+      {
+        role: 'user',
+        content: `Convert this Thai industrial product post into an English image generation prompt for Higgsfield AI.
+
+Focus on: the product, its industrial or cleanroom setting, professional lighting, clean and modern aesthetic.
+Style: professional product photography, studio quality, high detail.
+Max 80 words. English only.
+
+Post:
+${body}`,
+      },
+    ],
+  })
+
+  const choice = res.choices?.[0]
+  console.log('[generateImagePrompt] finish_reason:', choice?.finish_reason, '| content:', choice?.message?.content)
+  return choice?.message?.content?.trim() ?? ''
+}
