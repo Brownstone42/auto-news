@@ -17,15 +17,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api/higgsfield/status': {
-        target: 'https://higgsfieldstatus-yc6y4fychq-as.a.run.app',
+      '/api/higgsfield': {
+        target: 'https://hf-server-production.up.railway.app',
         changeOrigin: true,
-        rewrite: () => '/',
-      },
-      '/api/higgsfield/generate': {
-        target: 'https://higgsfieldgenerate-yc6y4fychq-as.a.run.app',
-        changeOrigin: true,
-        rewrite: () => '/',
       },
     },
   },

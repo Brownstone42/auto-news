@@ -1,3 +1,2 @@
-/api/higgsfield/status    https://higgsfieldstatus-yc6y4fychq-as.a.run.app    200
-/api/higgsfield/generate  https://higgsfieldgenerate-yc6y4fychq-as.a.run.app  200
+/api/higgsfield/*  https://hf-server-production.up.railway.app/api/higgsfield/:splat  200
 /*  /index.html  200

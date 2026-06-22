@@ -1,4 +1,4 @@
-const BASE = '/api/higgsfield'
+const BASE = import.meta.env.VITE_HF_BASE_URL || '/api/higgsfield'
 
 export async function checkHiggsfieldStatus() {
   const res = await fetch(`${BASE}/status`)

@@ -16,6 +16,13 @@ if (process.env.HF_ACCESS_TOKEN) {
 
 const app = express()
 app.use(express.json())
+app.use((_req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*')
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.set('Access-Control-Allow-Headers', 'Content-Type')
+  next()
+})
+app.options('*', (_req, res) => res.sendStatus(204))
 
 // higgsfield.cmd is just a thin wrapper around hf.exe — call hf directly for cleaner output
 const HF = process.platform === 'win32' ? 'hf.exe' : 'hf'
