@@ -1,11 +1,24 @@
 import express from 'express'
 import { spawn } from 'child_process'
+import { mkdirSync, writeFileSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
+
+// Write Higgsfield credentials from env vars so the CLI can authenticate headlessly
+if (process.env.HF_ACCESS_TOKEN) {
+  const dir = join(homedir(), '.config', 'higgsfield')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'credentials.json'), JSON.stringify({
+    access_token: process.env.HF_ACCESS_TOKEN,
+    refresh_token: process.env.HF_REFRESH_TOKEN || '',
+  }))
+}
 
 const app = express()
 app.use(express.json())
 
 // higgsfield.cmd is just a thin wrapper around hf.exe — call hf directly for cleaner output
-const HF = process.platform === 'win32' ? 'hf.exe' : 'higgsfield'
+const HF = process.platform === 'win32' ? 'hf.exe' : 'hf'
 
 // Hardcoded T2I fallback in case `higgsfield model list` output can't be parsed
 const FALLBACK_MODELS = [
@@ -19,7 +32,13 @@ const FALLBACK_MODELS = [
 function runCLI(args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     // shell: false so Node passes each arg as-is — no shell quoting mangling for prompt text
-    const proc = spawn(HF, args, { shell: false })
+    const env = { ...process.env }
+    if (process.env.HF_CREDENTIALS) {
+      const [key, secret] = process.env.HF_CREDENTIALS.split(':')
+      env.HF_API_KEY = key
+      env.HF_SECRET = secret
+    }
+    const proc = spawn(HF, args, { shell: false, env })
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d) => { stdout += d.toString() })
@@ -71,7 +90,7 @@ app.post('/api/higgsfield/generate', async (req, res) => {
   if (!model || !prompt) return res.status(400).json({ error: 'model and prompt are required' })
 
   try {
-    // Submit + wait in one call (up to 3 min). --json first, then subcommand, then params.
+    // Submit + wait in one call (up to 8 min). --json first, then subcommand, then params.
     const out = await runCLI(
       [
         '--json',
@@ -79,24 +98,28 @@ app.post('/api/higgsfield/generate', async (req, res) => {
         '--prompt', prompt,
         '--aspect_ratio', aspectRatio,
         '--wait',
+        '--wait-timeout', '7m',
+        '--wait-interval', '5s',
       ],
-      180000,
+      480000, // 8 min outer timeout (1 min buffer over the CLI's 7m)
     )
     console.log('[HF generate] raw:', out)
 
     const status = extractField(out, 'status')
-    if (status && status !== 'completed') throw new Error(`Job did not complete (status: ${status})`)
+    if (status && status !== 'completed') {
+      return res.status(500).json({ error: `Job did not complete (status: ${status})`, raw: out.slice(0, 1000) })
+    }
 
     const imageUrl = extractField(out, 'result_url')
-    if (!imageUrl) throw new Error(`No result_url in CLI output: ${out.slice(0, 400)}`)
+    if (!imageUrl) return res.status(500).json({ error: 'No result_url in output', raw: out.slice(0, 1000) })
 
     const jobId = extractField(out, 'id')
     res.json({ imageUrl, jobId })
   } catch (err) {
     console.error('[HF generate] error:', err.message)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: err.message, raw: err.message.slice(0, 1000) })
   }
 })
 
-const PORT = 3001
+const PORT = process.env.PORT || 3001
 app.listen(PORT, () => console.log(`Higgsfield proxy running on http://localhost:${PORT}`))
