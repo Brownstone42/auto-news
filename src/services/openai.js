@@ -65,7 +65,8 @@ export async function generatePost(product, postType, angle, examples, onChunk) 
 🎯 แนวทาง: ${angle.prompt}${examplesBlock}`
 
   const stream = await client.chat.completions.create({
-    model: import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini',
+    model: import.meta.env.VITE_OPENAI_MODEL || 'gpt-6-luna',
+    reasoning_effort: 'none',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
@@ -91,7 +92,8 @@ export async function generateImagePrompt(postText) {
   const body = postText.split('─')[0].trim()
 
   const res = await client.chat.completions.create({
-    model: import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini',
+    model: import.meta.env.VITE_OPENAI_MODEL || 'gpt-6-luna',
+    reasoning_effort: 'none',
     messages: [
       {
         role: 'system',
