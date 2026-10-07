@@ -5,7 +5,9 @@ import { astrologyCategories, astrologyTraditions, getAstrologyEntities, validat
 import { numerologyTraditions, getNumerologyCategories, getNumerologyEntities, validateNumerologySelection } from '@/data/numerology'
 import { baziCategories, getBaziEntities, validateBaziSelection } from '@/data/bazi'
 import { generateHoroscopePost } from '@/services/horoscope'
+import PredictionPlanner from '@/components/PredictionPlanner.vue'
 
+const sectionId = ref('education')
 const scienceId = ref('')
 const sciences = [
   { id: 'tarot', icon: '🃏', label: 'ไพ่ทาโรต์', description: 'ความหมายไพ่ ตำแหน่ง และพื้นฐานการอ่าน', ready: true },
@@ -56,7 +58,7 @@ const selection = computed(() => isBazi.value
   ? { science: scienceId.value, tradition: tradition.value, category: category.value, angle: angle.value, entity: entity.value, reference: reference.value }
   : { science: 'tarot', category: category.value, angle: angle.value, card: card.value, secondCard: secondCard.value, reference: reference.value })
 const displayedSelection = computed(() => output.value && currentSelection.value ? currentSelection.value : selection.value)
-const canGenerate = computed(() => ['tarot', 'astrology', 'numerology', 'bazi'].includes(scienceId.value) && category.value?.available !== false && validSelection(selection.value) && !isGenerating.value)
+const canGenerate = computed(() => sectionId.value === 'education' && ['tarot', 'astrology', 'numerology', 'bazi'].includes(scienceId.value) && category.value?.available !== false && validSelection(selection.value) && !isGenerating.value)
 const parts = computed(() => {
   const marker = '[ข้อความบนภาพ]'
   const index = output.value.indexOf(marker)
@@ -84,6 +86,10 @@ function selectScience(id) {
   currentSelection.value = null
   error.value = ''
   storageMessage.value = ''
+}
+function selectSection(id) {
+  sectionId.value = id
+  showHistory.value = false
 }
 function changeTradition() {
   if (!availableCategories.value.some((item) => item.id === categoryId.value)) {
@@ -134,6 +140,7 @@ async function copyPart(part) {
   } catch { error.value = 'คัดลอกอัตโนมัติไม่ได้ กรุณาเลือกข้อความแล้วคัดลอก' }
 }
 function openDraft(post) {
+  sectionId.value = 'education'
   scienceId.value = post.selection.science || 'tarot'
   tradition.value = post.selection.tradition || 'thai'
   currentId.value = post.id
@@ -172,17 +179,22 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
           <div class="brand-logo" aria-hidden="true">✦</div>
           <div>
             <h1 class="brand-name">ดวง Content Generator</h1>
-            <p class="brand-sub">{{ scienceId ? `${scienceLabel} · โพสต์เดียวอ่านจบ พร้อมนำไปปรับใช้` : 'เลือกศาสตร์ แล้วสร้างคอนเทนต์ให้ความรู้เรื่องดวง' }}</p>
+            <p class="brand-sub">{{ sectionId === 'prediction' ? 'ดูดวง · คำทำนายและคำอธิบายอยู่ครบในโพสต์' : scienceId ? `ให้ความรู้ · ${scienceLabel} · โพสต์เดียวอ่านจบ` : 'ให้ความรู้ · เลือกศาสตร์ แล้วสร้างคอนเทนต์เรื่องดวง' }}</p>
           </div>
         </div>
-        <div class="header-actions">
+        <div v-if="sectionId === 'education'" class="header-actions">
           <button v-if="scienceId && !showHistory" class="nav-btn" :disabled="isGenerating" @click="scienceId = ''">‹ เลือกศาสตร์</button>
-          <button class="nav-btn" :disabled="isGenerating" @click="showHistory = !showHistory">{{ showHistory ? '✦ สร้างโพสต์' : '📋 ประวัติโพสต์ดวง' }}</button>
+          <button class="nav-btn" :disabled="isGenerating" @click="showHistory = !showHistory">{{ showHistory ? '✦ สร้างโพสต์' : '📋 ประวัติโพสต์ให้ความรู้' }}</button>
         </div>
       </div>
     </header>
-    <main v-if="showHistory" class="tarot-history">
-      <h2>ประวัติโพสต์ดวง</h2>
+    <nav class="content-sections" aria-label="ประเภทโพสต์ดวง">
+      <button :class="['section-btn', { active: sectionId === 'education' }]" :aria-pressed="sectionId === 'education'" :disabled="isGenerating" @click="selectSection('education')">📚 ให้ความรู้</button>
+      <button :class="['section-btn', { active: sectionId === 'prediction' }]" :aria-pressed="sectionId === 'prediction'" :disabled="isGenerating" @click="selectSection('prediction')">🔮 ดูดวง</button>
+    </nav>
+    <main v-if="sectionId === 'prediction'"><PredictionPlanner /></main>
+    <main v-else-if="showHistory" class="tarot-history">
+      <h2>ประวัติโพสต์ให้ความรู้</h2>
       <p class="history-note">เก็บเฉพาะในเบราว์เซอร์นี้ สูงสุด 50 โพสต์ ยังไม่ซิงก์ข้ามเครื่อง</p>
       <p v-if="!history.length">ยังไม่มีโพสต์ เริ่มสร้างโพสต์แรกจากเมนูได้เลย</p>
       <button v-for="post in history" :key="post.id" class="draft-item" @click="openDraft(post)">
@@ -193,7 +205,7 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
     </main>
     <main v-else-if="!scienceId" class="science-home">
       <div class="science-intro">
-        <span class="science-eyebrow">ความรู้เรื่องดวง</span>
+        <span class="science-eyebrow">โพสต์ให้ความรู้</span>
         <h2>เลือกศาสตร์ที่อยากเล่า</h2>
         <p>แต่ละศาสตร์มีหมวดความรู้และหัวข้อของตัวเอง เลือกหมวดเพื่อเริ่มสร้างโพสต์</p>
       </div>
@@ -865,6 +877,16 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
 <style scoped>
 .tarot-controls { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.content-sections { display: flex; gap: 10px; padding: 16px 24px; background: white; border-bottom: 1px solid #e8ddf5; }
+.section-btn { border: 1px solid #ddd0ed; border-radius: 9px; background: white; color: #71627f; padding: 11px 20px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.section-btn.active { background: #f3e8ff; border-color: #7c3aed; color: #6d28d9; }
+.section-btn:hover:not(:disabled) { background: #faf7ff; }
+.section-btn:focus-visible { outline: 3px solid #a78bfa; outline-offset: 3px; }
+.section-btn:disabled { opacity: .65; cursor: default; }
+.prediction-placeholder { padding: 28px; background: white; border: 1px solid #ddd0ed; border-radius: 14px; }
+.prediction-placeholder h3 { margin: 16px 0 10px; font-size: 18px; }
+.prediction-placeholder p { color: #71627f; font-size: 14px; line-height: 1.8; }
+.prediction-status { display: inline-block; margin-top: 8px; background: #f3e8ff; color: #6d28d9; border-radius: 20px; padding: 6px 12px; font-size: 12px; }
 .science-home { max-width: 1100px; margin: auto; padding: 48px 24px; }
 .science-intro { margin-bottom: 28px; }
 .science-eyebrow { color: #7c3aed; font-size: 13px; font-weight: 600; }
