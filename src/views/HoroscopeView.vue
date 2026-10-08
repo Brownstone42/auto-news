@@ -1,11 +1,13 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, nextTick } from 'vue'
 import { tarotCards, tarotCategories, validateTarotSelection } from '@/data/tarot'
 import { astrologyCategories, astrologyTraditions, getAstrologyEntities, validateAstrologySelection } from '@/data/astrology'
 import { numerologyTraditions, getNumerologyCategories, getNumerologyEntities, validateNumerologySelection } from '@/data/numerology'
 import { baziCategories, getBaziEntities, validateBaziSelection } from '@/data/bazi'
 import { generateHoroscopePost } from '@/services/horoscope'
 import PredictionPlanner from '@/components/PredictionPlanner.vue'
+import { saveHoroscopePost, fetchHoroscopePosts, importLegacyHoroscopePosts, deleteHoroscopePost } from '@/services/firebase'
+import { presentPrediction } from '@/data/predictionPresentation'
 
 const sectionId = ref('education')
 const scienceId = ref('')
@@ -28,6 +30,19 @@ const error = ref('')
 const storageMessage = ref('')
 const copied = ref('')
 const showHistory = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyFilter = ref('all')
+const historySearch = ref('')
+const deletingId = ref(null)
+const historyDialog = ref(null)
+const openedPost = ref(null)
+const modalCopied = ref(false)
+const modalError = ref('')
+const modalResult = computed(() => presentPrediction(openedPost.value?.output || ''))
+const predictionDraft = ref(null)
+const predictionBusy = ref(false)
+const isSaving = ref(false)
 const currentId = ref(null)
 const currentSelection = ref(null)
 const history = ref([])
@@ -35,10 +50,62 @@ const STORAGE_KEY = 'auto-news.horoscope.posts.v1'
 try {
   const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
   if (!Array.isArray(stored)) throw new Error('Invalid history')
-  history.value = stored.filter((post) => post && typeof post.id === 'string' && typeof post.output === 'string' && post.selection && validSelection(post.selection, true)).slice(0, 50)
+  history.value = stored.filter((post) => post && typeof post.id === 'string' && typeof post.output === 'string' && post.selection && validSelection(post.selection, true)).slice(0, 50).map(post => ({ ...post, id: `horoscope_legacy_${post.id}`, legacyId: post.id, kind: 'education' }))
 } catch {
   storageMessage.value = 'เปิดประวัติในเบราว์เซอร์ไม่ได้ ยังสร้างและคัดลอกโพสต์ได้'
 }
+const historyCounts = computed(() => ({ all: history.value.length, education: history.value.filter(post => post.kind === 'education').length, prediction: history.value.filter(post => post.kind === 'prediction').length }))
+const historyTabs = [{ id: 'all', label: 'ทั้งหมด' }, { id: 'education', label: 'ให้ความรู้' }, { id: 'prediction', label: 'ดูดวง' }]
+const filteredHistory = computed(() => history.value.filter(post => (historyFilter.value === 'all' || post.kind === historyFilter.value) && `${draftTitle(post)} ${post.output}`.toLocaleLowerCase().includes(historySearch.value.trim().toLocaleLowerCase())))
+function historyHeadline(post) {
+  if (post.kind === 'prediction') return post.selection.format === 'child' ? 'เด็กเกิดวันนี้' : `ดวง${{ daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }[post.selection.period] || 'ตามช่วงเวลา'}`
+  return [post.selection.entity?.name || (post.selection.category.needsCard && post.selection.card?.name) || post.selection.category.label, post.selection.angle.label].filter(Boolean).join(' · ')
+}
+function historySubtitle(post) {
+  if (post.kind === 'prediction') return [post.selection.date, post.selection.topics?.join(' · ')].filter(Boolean).join(' / ')
+  return [selectionLabel(post.selection), post.selection.category.label].filter(Boolean).join(' / ')
+}
+function historyExcerpt(post) { return post.output.replace(/^\s*\[โพสต์\]\s*/, '').split('[ข้อความบนภาพ]')[0].trim() }
+async function loadHistory() {
+  if (historyLoading.value || deletingId.value) return
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    try {
+      const legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+      if (Array.isArray(legacy) && legacy.length) await importLegacyHoroscopePosts(legacy.filter(post => post?.selection && validSelection(post.selection, true)))
+    } catch { historyError.value = 'ย้ายประวัติเดิมจากเบราว์เซอร์ยังไม่สำเร็จ ข้อมูลเดิมยังอยู่ สามารถลองโหลดใหม่ได้' }
+    history.value = await fetchHoroscopePosts()
+  } catch {
+    historyError.value = 'โหลดประวัติจากฐานข้อมูลไม่สำเร็จ กรุณาลองใหม่ โพสต์เดิมในเบราว์เซอร์ยังอยู่'
+  } finally { historyLoading.value = false }
+}
+async function toggleHistory() {
+  showHistory.value = !showHistory.value
+  if (showHistory.value) await loadHistory()
+}
+async function deleteDraft(post) {
+  if (deletingId.value || historyLoading.value) return
+  if (!window.confirm(`ลบโพสต์ “${historyHeadline(post)}” ออกจากประวัติ?\nเมื่อลบแล้วจะกู้คืนไม่ได้`)) return
+  deletingId.value = post.id
+  historyError.value = ''
+  try {
+    await deleteHoroscopePost(post.id)
+    history.value = history.value.filter(item => item.id !== post.id)
+    if (currentId.value === post.id) {
+      currentId.value = null
+      currentSelection.value = null
+      output.value = ''
+    }
+    if (predictionDraft.value?.id === post.id) predictionDraft.value = null
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+      if (Array.isArray(stored)) localStorage.setItem(STORAGE_KEY, JSON.stringify(stored.filter(item => item.id !== post.legacyId && `horoscope_legacy_${item.id}` !== post.id)))
+    } catch { /* The database marker prevents re-import if local storage is unavailable. */ }
+  } catch { historyError.value = 'ลบโพสต์ไม่สำเร็จ กรุณาลองใหม่' }
+  finally { deletingId.value = null }
+}
+onMounted(loadHistory)
 const isAstrology = computed(() => scienceId.value === 'astrology')
 const isNumerology = computed(() => scienceId.value === 'numerology')
 const isBazi = computed(() => scienceId.value === 'bazi')
@@ -58,7 +125,7 @@ const selection = computed(() => isBazi.value
   ? { science: scienceId.value, tradition: tradition.value, category: category.value, angle: angle.value, entity: entity.value, reference: reference.value }
   : { science: 'tarot', category: category.value, angle: angle.value, card: card.value, secondCard: secondCard.value, reference: reference.value })
 const displayedSelection = computed(() => output.value && currentSelection.value ? currentSelection.value : selection.value)
-const canGenerate = computed(() => sectionId.value === 'education' && ['tarot', 'astrology', 'numerology', 'bazi'].includes(scienceId.value) && category.value?.available !== false && validSelection(selection.value) && !isGenerating.value)
+const canGenerate = computed(() => sectionId.value === 'education' && ['tarot', 'astrology', 'numerology', 'bazi'].includes(scienceId.value) && category.value?.available !== false && validSelection(selection.value) && !isGenerating.value && !isSaving.value)
 const parts = computed(() => {
   const marker = '[ข้อความบนภาพ]'
   const index = output.value.indexOf(marker)
@@ -98,20 +165,15 @@ function changeTradition() {
   }
   entityId.value = entities.value[0]?.id || ''
 }
-function saveDraft() {
-  if (!output.value.trim() || !currentSelection.value) return
-  const id = currentId.value || crypto.randomUUID()
-  const existing = history.value.find((item) => item.id === id)
-  const entry = { id, output: output.value, selection: currentSelection.value, createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() }
-  const next = [entry, ...history.value.filter((item) => item.id !== id)].slice(0, 50)
+async function saveDraft() {
+  if (!output.value.trim() || !currentSelection.value || isSaving.value) return
+  isSaving.value = true
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    history.value = next
-    currentId.value = id
-    storageMessage.value = 'บันทึกในเบราว์เซอร์นี้แล้ว'
+    currentId.value = await saveHoroscopePost({ id: currentId.value, kind: 'education', selection: currentSelection.value, output: output.value })
+    storageMessage.value = 'บันทึกในฐานข้อมูลแล้ว'
   } catch {
-    storageMessage.value = 'บันทึกไม่สำเร็จ กรุณาคัดลอกข้อความเก็บไว้ก่อนปิดหน้านี้'
-  }
+    storageMessage.value = 'บันทึกในฐานข้อมูลไม่สำเร็จ ลองบันทึกอีกครั้งหรือคัดลอกข้อความเก็บไว้'
+  } finally { isSaving.value = false }
 }
 async function generate() {
   if (!canGenerate.value) return
@@ -125,7 +187,7 @@ async function generate() {
   try {
     await generateHoroscopePost(snapshot, (text) => { output.value += text })
     if (!output.value.trim()) throw new Error('ยังไม่ได้รับข้อความจากระบบ กรุณาลองอีกครั้ง')
-    saveDraft()
+    await saveDraft()
   } catch (err) {
     error.value = err.message || 'สร้างโพสต์ไม่สำเร็จ กรุณาลองอีกครั้ง'
   } finally {
@@ -139,28 +201,25 @@ async function copyPart(part) {
     setTimeout(() => { copied.value = '' }, 2000)
   } catch { error.value = 'คัดลอกอัตโนมัติไม่ได้ กรุณาเลือกข้อความแล้วคัดลอก' }
 }
-function openDraft(post) {
-  sectionId.value = 'education'
-  scienceId.value = post.selection.science || 'tarot'
-  tradition.value = post.selection.tradition || 'thai'
-  currentId.value = post.id
-  currentSelection.value = post.selection
-  output.value = post.output
-  const activeCategory = availableCategories.value.find((item) => item.id === post.selection.category.id) || availableCategories.value[0]
-  categoryId.value = activeCategory.id
-  angleId.value = activeCategory.angles.some((item) => item.id === post.selection.angle.id) ? post.selection.angle.id : activeCategory.angles[0].id
-  cardId.value = post.selection.card?.id || 'major-0'
-  secondCardId.value = post.selection.secondCard?.id || 'major-1'
-  entityId.value = post.selection.entity?.id || entities.value[0]?.id || ''
-  if (scienceId.value === 'numerology' && category.value.id === 'number-pairs' && /^pair-\d{2}$/.test(entityId.value)) {
-    entityId.value = `pair-range-${Math.floor(Number(entityId.value.slice(5)) / 10)}`
-  }
-  reference.value = post.selection.reference || ''
-  showHistory.value = false
-  error.value = ''
-  storageMessage.value = ''
+async function openDraft(post) {
+  openedPost.value = post
+  modalCopied.value = false
+  modalError.value = ''
+  await nextTick()
+  historyDialog.value.showModal()
+}
+function closeHistoryPost() {
+  historyDialog.value.close()
+}
+async function copyHistoryPost() {
+  try {
+    await navigator.clipboard.writeText(modalResult.value.text)
+    modalCopied.value = true
+    modalError.value = ''
+  } catch { modalError.value = 'คัดลอกไม่ได้ กรุณาเลือกข้อความและคัดลอกเอง' }
 }
 function draftTitle(post) {
+  if (post.kind === 'prediction') return [post.selection.format === 'child' ? 'เด็กเกิดวันนี้' : 'ดวงตามช่วงเวลา', post.selection.date, { daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }[post.selection.period], post.selection.topics?.join(' / ')].filter(Boolean).join(' · ')
   return [selectionLabel(post.selection), post.selection.category.label, post.selection.entity?.name, post.selection.category.needsCard && post.selection.card?.name, post.selection.category.needsSecondCard && post.selection.secondCard?.name, post.selection.angle.label].filter(Boolean).join(' · ')
 }
 function selectionLabel(value) {
@@ -168,7 +227,7 @@ function selectionLabel(value) {
   if (value.science === 'numerology') return numerologyTraditions.find((item) => item.id === value.tradition)?.label || 'เลขศาสตร์'
   return value.science === 'astrology' ? `โหราศาสตร์${value.tradition === 'western' ? 'ตะวันตก' : 'ไทย'}` : 'ไพ่ทาโรต์'
 }
-function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
+function formatDate(date) { return (date?.toDate ? date.toDate() : new Date(date)).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) }
 </script>
 
 <template>
@@ -182,27 +241,36 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
             <p class="brand-sub">{{ sectionId === 'prediction' ? 'ดูดวง · คำทำนายและคำอธิบายอยู่ครบในโพสต์' : scienceId ? `ให้ความรู้ · ${scienceLabel} · โพสต์เดียวอ่านจบ` : 'ให้ความรู้ · เลือกศาสตร์ แล้วสร้างคอนเทนต์เรื่องดวง' }}</p>
           </div>
         </div>
-        <div v-if="sectionId === 'education'" class="header-actions">
-          <button v-if="scienceId && !showHistory" class="nav-btn" :disabled="isGenerating" @click="scienceId = ''">‹ เลือกศาสตร์</button>
-          <button class="nav-btn" :disabled="isGenerating" @click="showHistory = !showHistory">{{ showHistory ? '✦ สร้างโพสต์' : '📋 ประวัติโพสต์ให้ความรู้' }}</button>
+        <div class="header-actions">
+          <button v-if="sectionId === 'education' && scienceId && !showHistory" class="nav-btn" :disabled="isGenerating || isSaving" @click="scienceId = ''">‹ เลือกศาสตร์</button>
+          <button class="nav-btn" :disabled="isGenerating || isSaving || predictionBusy" @click="toggleHistory">{{ showHistory ? '✦ สร้างโพสต์' : '📋 ประวัติโพสต์ดวง' }}</button>
         </div>
       </div>
     </header>
-    <nav class="content-sections" aria-label="ประเภทโพสต์ดวง">
-      <button :class="['section-btn', { active: sectionId === 'education' }]" :aria-pressed="sectionId === 'education'" :disabled="isGenerating" @click="selectSection('education')">📚 ให้ความรู้</button>
-      <button :class="['section-btn', { active: sectionId === 'prediction' }]" :aria-pressed="sectionId === 'prediction'" :disabled="isGenerating" @click="selectSection('prediction')">🔮 ดูดวง</button>
+    <nav v-if="!showHistory" class="content-sections" aria-label="ประเภทโพสต์ดวง">
+      <button :class="['section-btn', { active: sectionId === 'education' }]" :aria-pressed="sectionId === 'education'" :disabled="isGenerating || isSaving || predictionBusy" @click="selectSection('education')">📚 ให้ความรู้</button>
+      <button :class="['section-btn', { active: sectionId === 'prediction' }]" :aria-pressed="sectionId === 'prediction'" :disabled="isGenerating || isSaving || predictionBusy" @click="selectSection('prediction')">🔮 ดูดวง</button>
     </nav>
-    <main v-if="sectionId === 'prediction'"><PredictionPlanner /></main>
-    <main v-else-if="showHistory" class="tarot-history">
-      <h2>ประวัติโพสต์ให้ความรู้</h2>
-      <p class="history-note">เก็บเฉพาะในเบราว์เซอร์นี้ สูงสุด 50 โพสต์ ยังไม่ซิงก์ข้ามเครื่อง</p>
-      <p v-if="!history.length">ยังไม่มีโพสต์ เริ่มสร้างโพสต์แรกจากเมนูได้เลย</p>
-      <button v-for="post in history" :key="post.id" class="draft-item" @click="openDraft(post)">
-        <strong>{{ draftTitle(post) }}</strong>
-        <time>{{ formatDate(post.updatedAt) }}</time>
-        <span>{{ post.output.replace('[โพสต์]', '').slice(0, 140) }}…</span>
-      </button>
+    <dialog ref="historyDialog" class="history-post-modal" aria-labelledby="history-post-title" @close="openedPost = null" @click="($event.target === historyDialog) && closeHistoryPost()">
+      <div class="modal-heading"><h2 id="history-post-title">{{ modalResult.title }}</h2><button type="button" class="modal-close" aria-label="ปิดโพสต์" autofocus @click="closeHistoryPost">×</button></div>
+      <div class="modal-result">{{ modalResult.body }}</div>
+      <div class="modal-actions"><p v-if="modalError" role="alert" class="tarot-error">{{ modalError }}</p><button type="button" class="copy-btn" @click="copyHistoryPost">{{ modalCopied ? 'คัดลอกแล้ว' : 'คัดลอกโพสต์' }}</button></div>
+    </dialog>
+    <main v-if="showHistory" class="tarot-history">
+      <div class="history-heading"><div><span class="science-eyebrow">คลังเนื้อหาของทีม</span><h2>ประวัติโพสต์ดวง</h2></div><button class="history-refresh" :disabled="historyLoading" @click="loadHistory">↻ {{ historyLoading ? 'กำลังโหลด…' : 'โหลดใหม่' }}</button></div>
+      <div class="history-toolbar"><div class="history-tabs" aria-label="กรองประเภทโพสต์"><button v-for="tab in historyTabs" :key="tab.id" :class="['history-tab', { active: historyFilter === tab.id }]" :aria-pressed="historyFilter === tab.id" @click="historyFilter = tab.id">{{ tab.label }} <span>{{ historyCounts[tab.id] }}</span></button></div><label class="history-search"><span aria-hidden="true">⌕</span><input v-model="historySearch" type="search" placeholder="ค้นหาหัวข้อหรือข้อความ…" aria-label="ค้นหาประวัติโพสต์ดวง" /></label></div>
+      <p v-if="historyLoading" class="history-note" role="status">กำลังโหลดประวัติจากฐานข้อมูล…</p><p v-if="historyError" class="tarot-error" role="alert">{{ historyError }}</p>
+      <div v-if="!historyLoading && !historyError && !filteredHistory.length" class="history-empty"><span aria-hidden="true">✦</span><h3>{{ historySearch ? 'ไม่พบโพสต์ที่ค้นหา' : 'ยังไม่มีโพสต์ในหมวดนี้' }}</h3><p>{{ historySearch ? 'ลองเปลี่ยนคำค้นหรือเลือกดูทั้งหมด' : 'เริ่มสร้างโพสต์ แล้วระบบจะบันทึกมาไว้ที่นี่' }}</p><button v-if="historySearch" class="history-refresh" @click="historySearch = ''">ล้างคำค้น</button></div>
+      <div class="history-grid"><article v-for="post in filteredHistory" :key="post.id" :class="['draft-item', { 'prediction-card': post.kind === 'prediction' }]">
+        <button class="draft-open" :disabled="!!deletingId" @click="openDraft(post)">
+        <div class="draft-top"><span class="draft-kind">{{ post.kind === 'prediction' ? '🔮 ดูดวง' : '📚 ให้ความรู้' }}</span><span class="draft-arrow" aria-hidden="true">↗</span></div>
+        <strong class="draft-title">{{ historyHeadline(post) }}</strong><span class="draft-meta">{{ historySubtitle(post) }}</span>
+        <p class="draft-excerpt">{{ historyExcerpt(post) }}</p>
+        </button>
+        <div class="draft-footer"><time>{{ formatDate(post.updatedAt || post.createdAt) }}</time><button class="draft-delete" :disabled="!!deletingId || historyLoading" :aria-label="`ลบโพสต์ ${historyHeadline(post)}`" @click="deleteDraft(post)">{{ deletingId === post.id ? 'กำลังลบ…' : 'ลบโพสต์' }}</button></div>
+      </article></div>
     </main>
+    <main v-else-if="sectionId === 'prediction'"><PredictionPlanner :draft="predictionDraft" @busy="predictionBusy = $event" @saved="predictionDraft = $event" /></main>
     <main v-else-if="!scienceId" class="science-home">
       <div class="science-intro">
         <span class="science-eyebrow">โพสต์ให้ความรู้</span>
@@ -221,7 +289,7 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
     <main v-else class="main">
       <aside class="panel-left" aria-label="ตั้งค่าคอนเทนต์เรื่องดวง">
         <div class="product-card"><span class="product-name-text">{{ scienceIcon }} หมวด{{ scienceLabel }}</span><span class="sales-text">ความรู้เรื่องดวง › {{ scienceLabel }}</span></div>
-        <fieldset class="tarot-controls" :disabled="isGenerating">
+        <fieldset class="tarot-controls" :disabled="isGenerating || isSaving">
           <section v-if="isAstrology || isNumerology" class="panel-section">
             <label :for="`${scienceId}-tradition`" class="section-title">แนว{{ scienceLabel }}</label>
             <select :id="`${scienceId}-tradition`" v-model="tradition" class="product-select" @change="changeTradition">
@@ -307,7 +375,7 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
           <section v-if="parts.image" class="image-copy"><h3>ข้อความบนภาพ</h3><p>{{ parts.image }}</p><button class="regen-btn" :disabled="isGenerating" @click="copyPart('image')">{{ copied === 'image' ? '✓ คัดลอกแล้ว' : 'คัดลอกข้อความบนภาพ' }}</button></section>
           <template v-if="!isGenerating && output">
             <div class="output-actions"><button class="copy-btn" @click="copyPart('post')">{{ copied === 'post' ? '✓ คัดลอกแล้ว' : '📋 คัดลอกโพสต์' }}</button><button class="regen-btn" :disabled="!canGenerate" @click="generate">↺ สร้างใหม่</button></div>
-            <details class="edit-draft"><summary>แก้ไขข้อความก่อนนำไปโพสต์</summary><label for="draft-text" class="field-note">คงหัวข้อ [โพสต์] และ [ข้อความบนภาพ] ไว้เพื่อคัดลอกแยกส่วน</label><textarea id="draft-text" v-model="output" rows="14" class="reference-input" /><button class="history-btn" @click="saveDraft">บันทึกฉบับแก้ไข</button></details>
+            <details class="edit-draft"><summary>แก้ไขข้อความก่อนนำไปโพสต์</summary><label for="draft-text" class="field-note">คงหัวข้อ [โพสต์] และ [ข้อความบนภาพ] ไว้เพื่อคัดลอกแยกส่วน</label><textarea id="draft-text" v-model="output" :disabled="isSaving" rows="14" class="reference-input" /><button class="history-btn" :disabled="isSaving" @click="saveDraft">{{ isSaving ? 'กำลังบันทึก…' : 'บันทึกฉบับแก้ไข' }}</button></details>
             <p class="field-note">ตรวจความหมายและแนวตีความก่อนเผยแพร่ หากไม่มีข้อมูลจากทีม ข้อความนี้เป็นร่างตามแนวตีความทั่วไป</p>
           </template>
         </div>
@@ -434,17 +502,22 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
 
 /* Product select */
 .product-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2371627f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
   width: 100%;
-  padding: 9px 11px;
+  padding: 9px 38px 9px 11px;
   border: 1px solid #ddd0ed;
   border-radius: 8px;
   font-size: 13.5px;
   color: #322344;
-  background: white;
+  background-color: white;
   cursor: pointer;
   outline: none;
-  appearance: auto;
 }
+@media (forced-colors: active) { .product-select { appearance: auto; background-image: none; } }
 .product-select:focus {
   border-color: #7c3aed;
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
@@ -913,9 +986,15 @@ function formatDate(date) { return new Date(date).toLocaleString('th-TH') }
 .image-copy p { white-space: pre-wrap; line-height: 1.8; font-size: 14px; }
 .edit-draft summary { cursor: pointer; font-size: 13px; margin-bottom: 10px; }
 .edit-draft .history-btn { margin-top: 10px; }
-.tarot-history { max-width: 1000px; margin: auto; padding: 30px 24px; }
-.history-note { color: #71627f; font-size: 13px; }
-.draft-item { display: flex; flex-direction: column; gap: 10px; width: 100%; text-align: left; font: inherit; background: white; border: 1px solid #e8ddf5; border-radius: 12px; padding: 20px; margin: 14px 0; cursor: pointer; color: #322344; }
-.draft-item:hover { border-color: #7c3aed; }
-.draft-item time, .draft-item span { font-size: 12px; color: #71627f; line-height: 1.6; }
+.tarot-history { max-width: 1200px; margin: auto; padding: 38px 24px 60px; }
+.history-heading { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 24px; }.history-heading h2 { font-size: 28px; margin: 8px 0; letter-spacing: -.5px; }.history-note { color: #71627f; font-size: 13px; line-height: 1.7; }
+.history-refresh { border: 1px solid #ddd0ed; border-radius: 10px; background: white; padding: 10px 15px; color: #6d28d9; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }.history-refresh:disabled { opacity: .6; cursor: default; }
+.history-toolbar { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 14px; border: 1px solid #e8ddf5; border-radius: 16px; background: white; margin-bottom: 24px; }.history-tabs { display: flex; flex-wrap: wrap; gap: 6px; }.history-tab { display: flex; gap: 9px; align-items: center; border: 0; border-radius: 9px; background: transparent; color: #71627f; padding: 10px 13px; font: inherit; font-size: 13px; cursor: pointer; }.history-tab span { background: #f5f2f8; border-radius: 6px; font-size: 11px; padding: 2px 6px; }.history-tab.active { background: #f3e8ff; color: #6d28d9; font-weight: 600; }.history-tab.active span { background: #e9d5ff; }
+.history-search { display: flex; gap: 9px; align-items: center; color: #9b86ad; background: #faf7ff; border: 1px solid #e8ddf5; border-radius: 10px; padding: 9px 12px; min-width: 0; }.history-search input { width: 220px; max-width: 100%; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; font-size: 13px; color: #322344; }.history-search:focus-within { border-color: #7c3aed; outline: 2px solid #ede9fe; }
+.history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }.draft-item { display: flex; flex-direction: column; gap: 12px; min-width: 0; width: 100%; text-align: left; font: inherit; background: white; border: 1px solid #e8ddf5; border-radius: 16px; padding: 22px; color: #322344; transition: border-color .15s, box-shadow .15s; }.draft-item:has(.draft-open:hover:not(:disabled)) { border-color: #a78bfa; box-shadow: 0 8px 24px #6d28d912; }.draft-item:focus-visible, .history-tab:focus-visible, .history-refresh:focus-visible { outline: 3px solid #a78bfa; outline-offset: 3px; }.draft-top { display: flex; align-items: center; justify-content: space-between; }.draft-kind { background: #f3e8ff; color: #6d28d9; font-size: 11px; border-radius: 20px; padding: 5px 10px; }.prediction-card .draft-kind { background: #fff3e6; color: #9a602c; }.draft-arrow { color: #b8a6ca; font-size: 20px; }.draft-title { font-size: 17px; line-height: 1.6; overflow-wrap: anywhere; }.draft-meta { color: #9b86ad; font-size: 11px; line-height: 1.7; }.draft-excerpt { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; color: #71627f; font-size: 13px; line-height: 1.9; margin: 0 0 8px; white-space: pre-line; }.draft-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-top: 1px solid #f0e8f8; padding-top: 14px; margin-top: auto; }.draft-footer time { color: #9b86ad; font-size: 10px; }.draft-footer span { color: #7c3aed; font-size: 11px; font-weight: 600; }
+.history-empty { text-align: center; background: white; border: 1px dashed #ddd0ed; border-radius: 18px; padding: 50px 20px; }.history-empty > span { color: #a78bfa; font-size: 38px; }.history-empty h3 { margin: 12px 0; font-size: 18px; }.history-empty p { color: #71627f; font-size: 13px; }
+.draft-delete:hover:not(:disabled) { background: #ffe4e6; color: #9f1239; }.draft-delete:active:not(:disabled) { background: #fecdd3; }
+.history-post-modal { width: min(720px, calc(100% - 32px)); max-height: calc(100dvh - 48px); padding: 28px; border: 1px solid #e8ddf5; border-radius: 20px; background: white; color: #322344; box-shadow: 0 24px 80px #1e103344; overflow-y: auto; }.history-post-modal::backdrop { background: #1e103380; backdrop-filter: blur(4px); }.modal-heading { display: flex; align-items: flex-start; gap: 18px; justify-content: space-between; }.modal-heading h2 { margin: 0; font-size: clamp(22px, 3vw, 28px); line-height: 1.5; overflow-wrap: anywhere; }.modal-close { flex-shrink: 0; width: 34px; height: 34px; border: 0; border-radius: 50%; background: #f5f2f8; color: #71627f; font-size: 24px; cursor: pointer; }.modal-result { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 14px; padding: 24px 0; }.modal-actions { border-top: 1px solid #e8ddf5; padding-top: 18px; display: flex; flex-direction: column; gap: 12px; }.modal-close:focus-visible { outline: 2px solid #7c3aed; outline-offset: 3px; }@media(max-width: 600px) { .history-post-modal { padding: 20px; } }
+.draft-open { display: flex; flex-direction: column; gap: 12px; width: 100%; padding: 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }.draft-delete { border: 0; border-radius: 6px; padding: 8px 12px; background: #fff1f2; color: #be123c; font: inherit; font-size: 11px; cursor: pointer; }.draft-footer { align-items: center; }.draft-open:focus-visible, .draft-delete:focus-visible { outline: 2px solid #a78bfa; outline-offset: 4px; }.draft-open:disabled, .draft-delete:disabled { opacity: .6; cursor: default; }
+@media (max-width: 1000px) { .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }@media (max-width: 700px) { .tarot-history { padding: 26px 16px; }.history-heading { align-items: flex-start; }.history-heading h2 { font-size: 23px; }.history-toolbar { flex-direction: column; align-items: stretch; }.history-search input { width: 100%; }.history-grid { grid-template-columns: 1fr; }.draft-item { padding: 20px; } }
 </style>

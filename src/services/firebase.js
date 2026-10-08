@@ -9,8 +9,9 @@ import {
   getDocs,
   query,
   orderBy,
-  limit,
   serverTimestamp,
+  runTransaction,
+  Timestamp,
 } from 'firebase/firestore'
 
 const app = initializeApp({
@@ -92,16 +93,16 @@ export async function updatePost(id, updates) {
 export async function fetchPosts() {
   const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'))
   const snap = await getDocs(q)
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter(post => post.business !== 'horoscope')
 }
 
 // Fetch context for few-shot prompting.
 // Returns finalized style examples + scored review signals.
 // Prefers same postType+angle; falls back to any matching status.
 export async function fetchExamples({ postTypeId, angleId }) {
-  const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(30))
+  const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'))
   const snap = await getDocs(q)
-  const all = snap.docs.map((d) => d.data())
+  const all = snap.docs.map((d) => d.data()).filter(post => post.business !== 'horoscope').slice(0, 30)
 
   const sameAngle = (d) => d.postType?.id === postTypeId && d.angle?.id === angleId
 
@@ -116,4 +117,67 @@ export async function fetchExamples({ postTypeId, angleId }) {
   const reviewed = [...reviewedSame, ...reviewedAny]
 
   return { finalized, reviewed }
+}
+
+// Horoscope posts share the existing database, with their own business marker.
+// No review, rating or scored versions are added to these documents.
+const cleanHoroscopeData = value => JSON.parse(JSON.stringify(value))
+export async function saveHoroscopePost({ id, kind, selection, output, calculation = null, model = import.meta.env.VITE_OPENAI_MODEL || 'gpt-6-luna' }) {
+  if (!['education', 'prediction'].includes(kind) || !selection || !output?.trim()) throw new Error('ข้อมูลโพสต์ดวงไม่ครบ')
+  if (id) {
+    const target = doc(db, 'posts', id)
+    const snap = await getDoc(target)
+    if (!snap.exists() || snap.data().business !== 'horoscope') throw new Error('ไม่พบโพสต์ดวงในฐานข้อมูล')
+    await updateDoc(target, { output, finalVersion: output, updatedAt: serverTimestamp() })
+    return id
+  }
+  const result = await addDoc(collection(db, 'posts'), {
+    business: 'horoscope', kind, selection: cleanHoroscopeData(selection), output,
+    aiGenerated: output, finalVersion: '', status: 'generated', model,
+    calculation: calculation ? cleanHoroscopeData({ method: calculation.method, promptData: calculation.promptData }) : null,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  })
+  return result.id
+}
+
+export async function fetchHoroscopePosts() {
+  const snap = await getDocs(query(collection(db, 'posts'), orderBy('createdAt', 'desc')))
+  return snap.docs.map(item => ({ id: item.id, ...item.data() })).filter(item => item.business === 'horoscope')
+}
+
+export async function deleteHoroscopePost(id) {
+  if (typeof id !== 'string' || !id || id.includes('/')) throw new Error('รหัสโพสต์ดวงไม่ถูกต้อง')
+  const target = doc(db, 'posts', id)
+  await runTransaction(db, async transaction => {
+    const snap = await transaction.get(target)
+    if (!snap.exists()) {
+      if (id.startsWith('horoscope_legacy_')) transaction.set(doc(db, 'horoscopeDeletedPosts', id), { deletedAt: serverTimestamp() })
+      return
+    }
+    if (snap.data().business !== 'horoscope') throw new Error('ไม่ใช่โพสต์ดวง')
+    // Keep a migration marker so another browser cannot re-import a deleted legacy draft.
+    if (id.startsWith('horoscope_legacy_')) transaction.set(doc(db, 'horoscopeDeletedPosts', id), { deletedAt: serverTimestamp() })
+    transaction.delete(target)
+  })
+}
+
+export async function importLegacyHoroscopePosts(posts) {
+  for (const post of posts) {
+    if (typeof post?.id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(post.id) || !post.selection || typeof post.output !== 'string' || !post.output.trim()) continue
+    const target = doc(db, 'posts', `horoscope_legacy_${post.id}`)
+    const timestamp = value => {
+      const date = new Date(value)
+      return Number.isNaN(date.getTime()) ? serverTimestamp() : Timestamp.fromDate(date)
+    }
+    await runTransaction(db, async transaction => {
+      if ((await transaction.get(doc(db, 'horoscopeDeletedPosts', target.id))).exists()) return
+      if ((await transaction.get(target)).exists()) return
+      transaction.set(target, {
+      business: 'horoscope', kind: 'education', selection: cleanHoroscopeData(post.selection),
+      output: post.output, aiGenerated: post.output, finalVersion: '', status: 'generated',
+      model: null, calculation: null, legacyId: post.id,
+      createdAt: timestamp(post.createdAt), updatedAt: timestamp(post.updatedAt),
+      })
+    })
+  }
 }
