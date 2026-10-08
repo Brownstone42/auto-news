@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { getColorDates, buildColorReport, renderColorPost } from '@/data/dailyColors'
 import { presentPrediction } from '@/data/predictionPresentation'
 import { saveHoroscopePost } from '@/services/firebase'
+import DateInput from './DateInput.vue'
 
 const props = defineProps({ draft: { type: Object, default: null } })
 const emit = defineEmits(['busy', 'saved'])
@@ -61,8 +62,8 @@ async function copy(post) {
         <label for="color-mode">รูปแบบวันที่</label>
         <select id="color-mode" v-model="mode"><option value="single">วันเดียว</option><option value="range">ช่วงวันที่</option></select>
         <label for="color-date">{{ mode === 'range' ? 'วันเริ่มต้น' : 'วันที่ต้องการ' }} (ค.ศ.)</label>
-        <input id="color-date" v-model="date" type="date" min="1900-01-01" max="2100-12-31" />
-        <template v-if="mode === 'range'"><label for="color-end-date">วันสิ้นสุด (ค.ศ.)</label><input id="color-end-date" v-model="endDate" type="date" :min="date" max="2100-12-31" /></template>
+        <DateInput id="color-date" v-model="date" min="1900-01-01" max="2100-12-31" />
+        <template v-if="mode === 'range'"><label for="color-end-date">วันสิ้นสุด (ค.ศ.)</label><DateInput id="color-end-date" v-model="endDate" :min="date" max="2100-12-31" /></template>
       </fieldset>
       <p class="color-note">{{ dates.error || `สร้าง ${dates.values.length} โพสต์ แยกวันละโพสต์ ครบทุกหัวข้อ` }}</p>
       <p v-if="mode === 'range'" class="color-note">เลือกได้ครั้งละไม่เกิน 31 วัน</p>

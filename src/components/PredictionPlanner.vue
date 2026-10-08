@@ -8,6 +8,7 @@ import { forecastTopics, getForecastContext, expandForecastGroups } from '@/data
 import { saveHoroscopePost } from '@/services/firebase'
 import { presentPrediction } from '@/data/predictionPresentation'
 import ColorPostPlanner from './ColorPostPlanner.vue'
+import DateInput from './DateInput.vue'
 
 const props = defineProps({ draft: { type: Object, default: null } })
 const emit = defineEmits(['busy', 'saved'])
@@ -195,7 +196,7 @@ async function copyOutput() {
         <fieldset class="form-fields" :disabled="isGenerating || isSaving">
         <h3>{{ format.icon }} {{ format.label }}</h3>
         <template v-if="!isChild && !isColors && !isCalendar"><label for="prediction-period">ช่วงเวลา</label><select id="prediction-period" v-model="period"><option value="daily">รายวัน</option><option value="weekly">รายสัปดาห์</option><option value="monthly">รายเดือน</option></select></template>
-        <label for="prediction-date">{{ isChild ? 'วันเดือนปีเกิด' : isCalendar ? 'เลือกวันที่ในเดือนที่ต้องการ' : 'วันที่อ้างอิง' }} (ค.ศ.)</label><input id="prediction-date" v-model="date" type="date" />
+        <label for="prediction-date">{{ isChild ? 'วันเดือนปีเกิด' : isCalendar ? 'เลือกวันที่ในเดือนที่ต้องการ' : 'วันที่อ้างอิง' }} (ค.ศ.)</label><DateInput id="prediction-date" v-model="date" />
         <p class="note">{{ range ? range.label : 'กรุณาเลือกวันที่ให้ครบ' }}</p>
         <template v-if="isChild">
           <label for="child-gender">เด็กเพศอะไร</label><select id="child-gender" v-model="gender"><option value="boy">เด็กผู้ชาย</option><option value="girl">เด็กผู้หญิง</option><option value="unspecified">ไม่ระบุ</option></select>

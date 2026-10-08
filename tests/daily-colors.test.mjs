@@ -41,6 +41,7 @@ Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { cl
 const filename = new URL('../src/components/ColorPostPlanner.vue', import.meta.url)
 const { descriptor } = parse(await readFile(filename, 'utf8'))
 const source = compileScript(descriptor, { id: 'color-post-test' }).content
+  .replace("import DateInput from './DateInput.vue'", 'const DateInput = {}')
   .replace(/from 'vue'/g, `from '${import.meta.resolve('vue')}'`)
   .replace(/from '@\/data\/([^']+)'/g, (_, name) => `from '${new URL(`../src/data/${name}.js`, import.meta.url).href}'`)
   .replace("import { saveHoroscopePost } from '@/services/firebase'", 'const saveHoroscopePost = globalThis.colorPostSaveMock')
