@@ -7,6 +7,7 @@ import { generateChildPrediction, generateForecastPrediction } from '@/services/
 import { forecastTopics, getForecastContext, expandForecastGroups } from '@/data/forecast'
 import { saveHoroscopePost } from '@/services/firebase'
 import { presentPrediction } from '@/data/predictionPresentation'
+import ColorPostPlanner from './ColorPostPlanner.vue'
 
 const props = defineProps({ draft: { type: Object, default: null } })
 const emit = defineEmits(['busy', 'saved'])
@@ -14,7 +15,7 @@ const emit = defineEmits(['busy', 'saved'])
 const formats = [
   { id: 'forecast', icon: '🔮', label: 'ดวงตามช่วงเวลา', description: 'รายวัน รายสัปดาห์ รายเดือน' },
   { id: 'child', icon: '👶', label: 'เด็กเกิดวันนี้', description: 'เลขศาสตร์ ราศี ปีนักษัตร และทิศส่งเสริม' },
-  { id: 'colors', icon: '🎨', label: 'สีมงคล', description: 'สีตามวันเกิดและเรื่องที่เน้น' },
+  { id: 'colors', icon: '🎨', label: 'สีมงคล', description: 'เลือกวันหรือช่วงวันที่ ครบทุกหัวข้อ' },
   { id: 'calendar', icon: '🗓️', label: 'ปฏิทินดวง', description: 'รัก งาน เงิน และสุขภาวะ' },
   { id: 'ranking', icon: '🏆', label: 'จัดอันดับดวงเด่น', description: 'เงินพุ่ง รักเด่น งานปัง' },
   { id: 'good-news', icon: '✨', label: 'ข่าวดีที่กำลังมา', description: 'เรื่องน่าจับตาในช่วงที่เลือก' },
@@ -39,9 +40,10 @@ const generationError = ref('')
 const copied = ref('')
 const currentId = ref(null)
 const isSaving = ref(false)
+const colorBusy = ref(false)
 const storageMessage = ref('')
 const storageError = ref(false)
-watch([isGenerating, isSaving], () => emit('busy', isGenerating.value || isSaving.value))
+watch([isGenerating, isSaving, colorBusy], () => emit('busy', isGenerating.value || isSaving.value || colorBusy.value))
 const format = computed(() => formats.find(item => item.id === formatId.value))
 const isChild = computed(() => formatId.value === 'child')
 const isForecast = computed(() => formatId.value === 'forecast')
@@ -89,7 +91,7 @@ const childFacts = computed(() => parsedDate.value ? {
 } : null)
 const childKua = computed(() => childFacts.value ? calculateChildKua(date.value, gender.value, childFacts.value) : null)
 function changeFormat(id) {
-  if (isGenerating.value || isSaving.value) return
+  if (isGenerating.value || isSaving.value || colorBusy.value) return
   if (formatId.value !== id) {
     output.value = ''
     generatedSelection.value = null
@@ -157,6 +159,7 @@ async function saveGenerated() {
 watch(() => props.draft, post => {
   if (!post || (post.id === currentId.value && post.output === output.value)) return
   const value = post.selection
+  if (value.format === 'colors' && isColors.value) return
   changeFormat(value.format)
   date.value = value.date
   period.value = value.period || 'weekly'
@@ -184,9 +187,10 @@ async function copyOutput() {
   <div class="planner">
     <div class="intro"><span>โพสต์ดูดวง</span><h2>เลือกแนวโพสต์ที่อยากทำ</h2><p>คำทำนายอยู่ครบในโพสต์ อ่านจบได้เลย ไม่ต้องรอแอดมินตอบ</p></div>
     <div class="format-grid" aria-label="รูปแบบโพสต์ดูดวง">
-      <button v-for="item in formats" :key="item.id" :class="['format-card', { active: formatId === item.id }]" :aria-pressed="formatId === item.id" :disabled="isGenerating || isSaving" @click="changeFormat(item.id)"><span aria-hidden="true">{{ item.icon }}</span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></button>
+      <button v-for="item in formats" :key="item.id" :class="['format-card', { active: formatId === item.id }]" :aria-pressed="formatId === item.id" :disabled="isGenerating || isSaving || colorBusy" @click="changeFormat(item.id)"><span aria-hidden="true">{{ item.icon }}</span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></button>
     </div>
-    <div class="workspace">
+    <ColorPostPlanner v-if="isColors" :draft="draft" @busy="colorBusy = $event" @saved="emit('saved', $event)" />
+    <div v-else class="workspace">
       <aside class="settings" aria-label="ตั้งค่ารูปแบบโพสต์ดูดวง">
         <fieldset class="form-fields" :disabled="isGenerating || isSaving">
         <h3>{{ format.icon }} {{ format.label }}</h3>

@@ -22,6 +22,7 @@ const filename = new URL('../src/components/PredictionPlanner.vue', import.meta.
 const { descriptor } = parse(await readFile(filename, 'utf8'))
 let source = compileScript(descriptor, { id: 'prediction-history-test' }).content
 source = source.replace(/from 'vue'/g, `from '${import.meta.resolve('vue')}'`)
+  .replace("import ColorPostPlanner from './ColorPostPlanner.vue'", 'const ColorPostPlanner = {}')
   .replace(/from '@\/data\/([^']+)'/g, (_, name) => `from '${new URL(`../src/data/${name}.js`, import.meta.url).href}'`)
   .replace(/import \{([^}]+)\} from '@\/services\/(?:prediction|firebase)'/g, 'const {$1} = globalThis.predictionHistoryMocks')
 const { default: component } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))

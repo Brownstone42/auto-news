@@ -219,7 +219,7 @@ async function copyHistoryPost() {
   } catch { modalError.value = 'คัดลอกไม่ได้ กรุณาเลือกข้อความและคัดลอกเอง' }
 }
 function draftTitle(post) {
-  if (post.kind === 'prediction') return [post.selection.format === 'child' ? 'เด็กเกิดวันนี้' : 'ดวงตามช่วงเวลา', post.selection.date, { daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }[post.selection.period], post.selection.topics?.join(' / ')].filter(Boolean).join(' · ')
+  if (post.kind === 'prediction') return [{ child: 'เด็กเกิดวันนี้', colors: 'สีมงคลประจำวัน', forecast: 'ดวงตามช่วงเวลา' }[post.selection.format] || 'โพสต์ดูดวง', post.selection.date, { daily: 'รายวัน', weekly: 'รายสัปดาห์', monthly: 'รายเดือน' }[post.selection.period], post.selection.topics?.join(' / ')].filter(Boolean).join(' · ')
   return [selectionLabel(post.selection), post.selection.category.label, post.selection.entity?.name, post.selection.category.needsCard && post.selection.card?.name, post.selection.category.needsSecondCard && post.selection.secondCard?.name, post.selection.angle.label].filter(Boolean).join(' · ')
 }
 function selectionLabel(value) {
