@@ -1,7 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { zodiacSigns } from '@/data/astrology'
-import { getBirthProfile, childPostTopics } from '@/data/birthProfile'
+import { getBirthProfile, childPostTopics, defaultChildTopics, normalizeChildTopic } from '@/data/birthProfile'
+import { calculateChildKua } from '@/data/childKua'
 import { generateChildPrediction, generateForecastPrediction } from '@/services/prediction'
 import { forecastTopics, getForecastContext, expandForecastGroups } from '@/data/forecast'
 import { saveHoroscopePost } from '@/services/firebase'
@@ -12,7 +13,7 @@ const emit = defineEmits(['busy', 'saved'])
 
 const formats = [
   { id: 'forecast', icon: '🔮', label: 'ดวงตามช่วงเวลา', description: 'รายวัน รายสัปดาห์ รายเดือน' },
-  { id: 'child', icon: '👶', label: 'เด็กเกิดวันนี้', description: 'จุดเด่นและแนวทางส่งเสริม' },
+  { id: 'child', icon: '👶', label: 'เด็กเกิดวันนี้', description: 'เลขศาสตร์ ราศี ปีนักษัตร และทิศส่งเสริม' },
   { id: 'colors', icon: '🎨', label: 'สีมงคล', description: 'สีตามวันเกิดและเรื่องที่เน้น' },
   { id: 'calendar', icon: '🗓️', label: 'ปฏิทินดวง', description: 'รัก งาน เงิน และสุขภาวะ' },
   { id: 'ranking', icon: '🏆', label: 'จัดอันดับดวงเด่น', description: 'เงินพุ่ง รักเด่น งานปัง' },
@@ -82,13 +83,11 @@ const dailyDates = computed(() => {
     return { id: day.toISOString(), label: `${weekdays[(day.getUTCDay() + 6) % 7]} ${day.getUTCDate()}` }
   })
 })
-function reduceNumber(number) { while (number > 9) number = [...String(number)].reduce((sum, digit) => sum + Number(digit), 0); return number }
 const childFacts = computed(() => parsedDate.value ? {
   ...getBirthProfile(date.value),
   weekday: weekdays[(parsedDate.value.getUTCDay() + 6) % 7],
-  birthNumber: reduceNumber(parsedDate.value.getUTCDate()),
-  lifePath: reduceNumber([...date.value.replaceAll('-', '')].reduce((sum, digit) => sum + Number(digit), 0)),
 } : null)
+const childKua = computed(() => childFacts.value ? calculateChildKua(date.value, gender.value, childFacts.value) : null)
 function changeFormat(id) {
   if (isGenerating.value || isSaving.value) return
   if (formatId.value !== id) {
@@ -101,7 +100,7 @@ function changeFormat(id) {
     storageMessage.value = ''
   }
   formatId.value = id
-  topics.value = [...(id === 'child' ? childTopics : adultTopics)]
+  topics.value = [...(id === 'child' ? defaultChildTopics : adultTopics)]
   focus.value = 'การงาน'
   if (id === 'colors') groupBy.value = 'weekday'
   if (id === 'forecast') groupBy.value = 'weekday'
@@ -119,7 +118,7 @@ function forecastSelection() {
 }
 const canGenerate = computed(() => {
   if (isGenerating.value || isSaving.value || !supportsGeneration.value || !topics.value.length) return false
-  if (isChild.value) return !!childFacts.value?.chineseYear
+  if (isChild.value) return !!childFacts.value
   if (!parsedDate.value || parsedDate.value.getUTCFullYear() < 1900 || parsedDate.value.getUTCFullYear() > 2100) return false
   try { getForecastContext(forecastSelection()); return true } catch { return false }
 })
@@ -149,7 +148,7 @@ async function saveGenerated() {
   isSaving.value = true
   storageError.value = false
   try {
-    currentId.value = await saveHoroscopePost({ id: currentId.value, kind: 'prediction', selection: generatedSelection.value, output: output.value, calculation: calculation.value })
+    currentId.value = await saveHoroscopePost({ id: currentId.value, kind: 'prediction', selection: generatedSelection.value, output: output.value, calculation: calculation.value, model: generatedSelection.value.format === 'child' ? `rules/${calculation.value?.method.version || 'child-date-based-readings-v4'}` : undefined })
     storageMessage.value = 'บันทึกในฐานข้อมูลแล้ว'
     emit('saved', { id: currentId.value, kind: 'prediction', selection: generatedSelection.value, output: output.value, calculation: calculation.value })
   } catch { storageError.value = true; storageMessage.value = 'บันทึกอัตโนมัติไม่สำเร็จ กรุณาคัดลอกข้อความเก็บไว้' }
@@ -166,7 +165,7 @@ watch(() => props.draft, post => {
   groupIds.value = value.scope === 'all' ? groups.value.map(item => item.id) : value.groupIds || []
   gender.value = value.gender || 'unspecified'
   const allowed = value.format === 'child' ? childTopics : adultTopics
-  topics.value = value.topics?.filter(topic => allowed.includes(topic)) || [...allowed]
+  topics.value = value.topics?.map(topic => value.format === 'child' ? normalizeChildTopic(topic) : topic).filter(topic => allowed.includes(topic)) || [...allowed]
   if (!topics.value.length) topics.value = [...allowed]
   currentId.value = post.id
   generatedSelection.value = value
@@ -196,7 +195,7 @@ async function copyOutput() {
         <p class="note">{{ range ? range.label : 'กรุณาเลือกวันที่ให้ครบ' }}</p>
         <template v-if="isChild">
           <label for="child-gender">เด็กเพศอะไร</label><select id="child-gender" v-model="gender"><option value="boy">เด็กผู้ชาย</option><option value="girl">เด็กผู้หญิง</option><option value="unspecified">ไม่ระบุ</option></select>
-          <div v-if="childFacts" class="birth-facts" aria-live="polite"><strong>ข้อมูลจากวันเกิดเด็ก</strong><dl><dt>วันเกิด</dt><dd>วัน{{ childFacts.weekday }}</dd><dt>ราศี</dt><dd>{{ childFacts.zodiac }}</dd><dt>ปีนักษัตร / ธาตุปี</dt><dd>{{ childFacts.chineseYear?.label || 'เบราว์เซอร์นี้ไม่รองรับปฏิทินจีน' }}</dd></dl></div>
+          <div v-if="childFacts" class="birth-facts" aria-live="polite"><strong>ข้อมูลจากวันเกิดเด็ก</strong><dl><dt>วันเกิด</dt><dd>วัน{{ childFacts.weekday }}</dd><dt>ราศีอาทิตย์</dt><dd>{{ childFacts.zodiac || 'วันย้ายราศี — เว้นคำอ่านราศี' }}</dd><dt>ปีนักษัตร</dt><dd>{{ childFacts.chineseYear ? `ปี${childFacts.chineseYear.animal} (${childFacts.chineseYear.animalThai})` : 'เว้นคำอ่านปีนักษัตร — ปฏิทินจีนไม่พร้อม' }}</dd><dt>เลขกัวจากปีเกิดและเพศ</dt><dd>{{ childKua?.status === 'available' ? childKua.kua : childKua?.reason }}</dd></dl></div>
           <p class="note">ราศีใช้ช่วงวันเกิดแบบตะวันตกโดยประมาณ ปีนักษัตรจีนเปลี่ยนปีเมื่อถึงวันตรุษจีน</p>
         </template>
         <template v-else>
@@ -219,7 +218,7 @@ async function copyOutput() {
         <span class="badge">ตัวอย่างโครงโพสต์</span><h3>{{ title }}</h3><p>{{ range?.label || 'รอเลือกวันที่' }}</p>
         <p class="notice">{{ isChild ? 'เลือกวันเกิดเด็กและหัวข้อ แล้วกดสร้างโพสต์ได้เลย' : isForecast ? 'เลือกวันเกิดหรือราศี ช่วงเวลา และหัวข้อ แล้วกดสร้างโพสต์' : 'ตอนนี้ลองจัดรูปแบบได้ ยังไม่มีคำทำนายจริง เราจะกำหนดหลักการทำนายในขั้นต่อไป' }}</p>
         <template v-if="range">
-          <template v-if="isChild"><h4>{{ gender === 'boy' ? 'เด็กผู้ชาย' : gender === 'girl' ? 'เด็กผู้หญิง' : 'เด็ก' }}เกิดวันที่ {{ range.label }}</h4><p>วัน{{ childFacts.weekday }} · {{ childFacts.zodiac }} · เลขวันเกิด {{ childFacts.birthNumber }} · เส้นทางชีวิต {{ childFacts.lifePath }} · {{ childFacts.chineseYear?.label || 'ยังอ่านปีนักษัตรไม่ได้' }}</p><p class="note">เลขตัวอย่างใช้ผลรวมลดเหลือหลักเดียวและปี ค.ศ. ยังไม่ใช้ข้อยกเว้น Master Numbers</p><div v-for="topic in topics" :key="topic" class="outline"><strong>{{ topic }}</strong><span>พื้นที่สำหรับคำอธิบายและแนวทางส่งเสริม</span></div><p v-if="!topics.length" class="note">เลือกอย่างน้อยหนึ่งหัวข้อเพื่อดูโครงโพสต์</p></template>
+          <template v-if="isChild"><h4>{{ gender === 'boy' ? 'เด็กผู้ชาย' : gender === 'girl' ? 'เด็กผู้หญิง' : 'เด็ก' }}เกิดวันที่ {{ range.label }}</h4><p>เลขวันเกิด {{ childFacts.birthNumber }} · เส้นทางชีวิต {{ childFacts.lifePath }}</p><p class="note">ใช้ศาสตร์เท่าที่ข้อมูลครบ วันเกิดอิงเวลาไทย เพศมีผลต่อเลขกัวและทิศส่งเสริม หากเป็นวันย้ายราศีหรือวันลี่ชุนจะเว้นส่วนที่ต้องใช้เวลาเกิด</p><div v-for="topic in topics" :key="topic" class="outline"><strong>{{ topic }}</strong><span>{{ topic === 'ทิศส่งเสริม' && childKua?.status !== 'available' ? 'เว้นหัวข้อนี้ เพราะข้อมูลยังไม่พอ' : 'คำอ่านและคำแนะนำสั้นจากข้อมูลที่ใช้ได้' }}</span></div><p v-if="!topics.length" class="note">เลือกอย่างน้อยหนึ่งหัวข้อเพื่อดูโครงโพสต์</p></template>
           <template v-else-if="isRanking"><h4>จัดอันดับ{{ focus }}เด่น · {{ groupBy === 'weekday' ? 'ตามวันเกิด' : 'ตามราศี' }}</h4><div v-for="rank in 3" :key="rank" class="outline"><strong>อันดับ {{ rank }}</strong><span>กลุ่มที่เด่น · เรื่องที่น่าจับตา · คำแนะนำ</span></div><p class="note">ยังไม่จัดอันดับกลุ่มจริงจนกว่าจะกำหนดเกณฑ์</p></template>
           <template v-else><p v-if="!selectedGroups.length" class="note">เลือกอย่างน้อยหนึ่งกลุ่มเพื่อดูโครงโพสต์</p><article v-for="group in previewGroups" :key="group.id" class="group-outline"><h4>{{ group.name }}</h4>
             <template v-if="isColors"><div v-for="topic in ['โชคลาภ', 'การงาน', 'การเงิน', 'ความรัก']" :key="topic" class="outline"><strong>สีเสริม{{ topic }}{{ topic === focus ? ' · เรื่องที่เน้น' : '' }}</strong><span>พื้นที่สำหรับสีและคำอธิบายสั้น ๆ</span></div><div class="outline"><strong>สีที่ควรเลี่ยง</strong><span>พื้นที่สำหรับสีและคำอธิบายสั้น ๆ</span></div></template>

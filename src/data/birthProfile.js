@@ -1,25 +1,65 @@
-// Conventional tropical date ranges, not a timed natal-chart calculation.
-// https://www.horoscope.com/zodiac-signs
-const zodiacStarts = [
-  [120, 'กุมภ์'], [219, 'มีน'], [321, 'เมษ'], [420, 'พฤษภ'],
-  [521, 'เมถุน'], [621, 'กรกฎ'], [723, 'สิงห์'], [823, 'กันย์'],
-  [923, 'ตุล'], [1023, 'พิจิก'], [1122, 'ธนู'], [1222, 'มังกร'],
-]
+import { GeoVector, Ecliptic } from 'astronomy-engine'
+const zodiacNames = ['เมษ', 'พฤษภ', 'เมถุน', 'กรกฎ', 'สิงห์', 'กันย์', 'ตุล', 'พิจิก', 'ธนู', 'มังกร', 'กุมภ์', 'มีน']
+// Date-only input is a civil day in the app's Asia/Bangkok timezone.
+// A solar ingress on that day cannot be resolved without the birth time.
+// https://github.com/cosinekitty/astronomy/blob/master/source/js/README.md
+export function getDateOnlySunSign(isoDate) {
+  const start = new Date(`${isoDate}T00:00:00+07:00`)
+  const end = new Date(start.getTime() + 86400000 - 1)
+  const longitudes = [start, end].map(time => Ecliptic(GeoVector('Sun', time, true)).elon)
+  const signs = longitudes.map(longitude => Math.floor(longitude / 30))
+  return { status: signs[0] === signs[1] ? 'available' : 'needs-birth-time', timeZone: 'Asia/Bangkok', start: start.toISOString(), end: end.toISOString(), longitudes, signIndex: signs[0] === signs[1] ? signs[0] : null }
+}
 const animals = [
   ['หนู', 'ชวด'], ['วัว', 'ฉลู'], ['เสือ', 'ขาล'], ['กระต่าย', 'เถาะ'],
   ['มังกร', 'มะโรง'], ['งู', 'มะเส็ง'], ['ม้า', 'มะเมีย'], ['แพะ', 'มะแม'],
   ['ลิง', 'วอก'], ['ไก่', 'ระกา'], ['สุนัข', 'จอ'], ['หมู', 'กุน'],
 ]
 const elements = ['ไม้', 'ไฟ', 'ดิน', 'ทอง', 'น้ำ']
-export const childPostTopics = ['นิสัยโดยรวม', 'จุดเด่น', 'การเรียนรู้', 'ความสัมพันธ์กับครอบครัวและเพื่อน', 'สุขภาวะ', 'สิ่งที่ควรส่งเสริม', 'แนวอาชีพเมื่อโตขึ้น', 'เรื่องควรใส่ใจ']
+export const childTopicLabels = {
+  personality: 'นิสัย',
+  strength: 'จุดเด่น',
+  learning: 'การเรียนรู้',
+  support: 'สิ่งที่ควรส่งเสริม',
+  caution: 'เรื่องที่ควรใส่ใจ',
+  direction: 'ทิศส่งเสริม',
+}
+export const childPostTopics = Object.values(childTopicLabels)
+export const defaultChildTopics = [childTopicLabels.personality, childTopicLabels.strength, childTopicLabels.learning, childTopicLabels.support, childTopicLabels.caution, childTopicLabels.direction]
+export function normalizeChildTopic(topic) {
+  return { นิสัยโดยรวม: childTopicLabels.personality, 'นิสัยจากเส้นทางชีวิต': childTopicLabels.personality, 'จุดเด่นจากเลขวันเกิด': childTopicLabels.strength, เรื่องควรใส่ใจ: childTopicLabels.caution, 'เรื่องควรใส่ใจจากเส้นทางชีวิต': childTopicLabels.caution }[topic] || topic
+}
 const modulo = (number, base) => ((number % base) + base) % base
+export function reduceBirthNumber(value) {
+  while (value > 9 && ![11, 22, 33].includes(value)) value = [...String(value)].reduce((sum, digit) => sum + Number(digit), 0)
+  return value
+}
+export function getBirthNumbers(isoDate) {
+  if (typeof isoDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null
+  const date = new Date(`${isoDate}T12:00:00Z`)
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== isoDate) return null
+  const digits = [...isoDate.replaceAll('-', '')].map(Number)
+  const trace = input => {
+    const steps = [input]
+    let value = input
+    while (value > 9 && ![11, 22, 33].includes(value)) {
+      value = [...String(value)].reduce((total, digit) => total + Number(digit), 0)
+      steps.push(value)
+    }
+    return { input, steps, value }
+  }
+  const parts = { month: trace(date.getUTCMonth() + 1), day: trace(date.getUTCDate()), year: trace(date.getUTCFullYear()) }
+  const sum = Object.values(parts).reduce((total, part) => total + part.value, 0)
+  const combined = trace(sum)
+  return { birthDay: date.getUTCDate(), birthNumber: date.getUTCDate(), lifePath: combined.value, lifePathParts: parts, lifePathCombined: combined, lifePathSum: sum, lifePathDigits: digits }
+}
 
 export function getBirthProfile(isoDate) {
   if (typeof isoDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null
   const date = new Date(`${isoDate}T12:00:00Z`)
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== isoDate) return null
-  const monthDay = (date.getUTCMonth() + 1) * 100 + date.getUTCDate()
-  const zodiac = [...zodiacStarts].reverse().find(([start]) => monthDay >= start)?.[1] || 'มังกร'
+  const sunSign = getDateOnlySunSign(isoDate)
+  const zodiac = sunSign.status === 'available' ? `ราศี${zodiacNames[sunSign.signIndex]}` : null
   let chineseYear = null
   // ICU's Chinese calendar supplies the related Gregorian year after the lunar
   // new year boundary, rather than treating January 1 as the animal-year change.
@@ -36,5 +76,5 @@ export function getBirthProfile(isoDate) {
       }
     }
   } catch { /* Leave unavailable calendar data explicit in the UI. */ }
-  return { zodiac: `ราศี${zodiac}`, chineseYear }
+  return { zodiac, sunSign, chineseYear, ...getBirthNumbers(isoDate) }
 }
